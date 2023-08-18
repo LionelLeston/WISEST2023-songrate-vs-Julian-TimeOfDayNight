@@ -1,2 +1,3 @@
 # WISEST2023-songrate-vs-Julian-TimeOfDayNight
 R Markdown scripts demonstrating data extraction, data processing, bootstrapping and GAMMs
+This repository stores R Markdown scripts and enough data to demonstrate basic spatial data extraction, data processing, data exploration, and modelling of data. Models include ordinary least-squares regression, generalized linear models, and generalized additive mixed models. The scripts culminate in analyses of effects of time of day/night and time of year on song activity in three songbird species (Swainson's Thrush, Tennessee Warbler, White-throated Sparrow), and how those effects vary for northern Alberta and southern Alberta.
