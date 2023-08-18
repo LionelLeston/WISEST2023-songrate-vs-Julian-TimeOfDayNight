@@ -1,0 +1,451 @@
+---
+title: "Lesson 5. Data Exploration and Plotting in R"
+author: "L Leston"
+date: "2023-07-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate examples of exploring and plotting potential relationships in data in R. We will show examples of using base R and the *tidyverse* packages like *tidyr*, *dplyr*, and *ggplot* to plot data, and start introducing very simple models.
+
+**Learning Outcomes**
+
+The student will be able to manipulate data frames to get data ready for plotting.
+
+The student will explore how data within a single variable is distributed (*histogram*).
+
+The student will be able to generate box plots to compare values of a variable within two or more categorical groups (*box, bar plots*).
+
+The student will be able to generate plots showing how one numeric variable's values change with the values of another numeric variable (*scatter plot*).
+
+The student will be able to run a simple *model* describing a theoretical relationship between two or more variables. Model examples include a *t-test*, a *regression*, an *analysis of variance (ANOVA)*, and a *generalized linear model*.
+
+The student will merge predictor data (*independent or explanatory* variables for each site) to bird count data to test for a relationship between bird abundance (the *dependent variable*) and an *independent variable*.
+
+**Wild Trax data set: BU_Edge_Communities_2021-2022**
+
+The BU Edge Communities 2021-2022 data set consists of recordings from ARU stations set up along short transects starting at different kinds of manmade edges in Alberta's boreal forests. These edges are associated with either harvest of trees for timber or pulpwood or different types oil and gas footprint (seismic lines, pipelines, roads, well sites).
+
+The data we are looking at consist of detections of different species per recording at each ARU station. There can be multiple recordings per station, multiple species detected per recording, and one or more individuals per species detected per recording. *Note*: not all of the recordings have been transcribed yet, so there are some recordings with "NONE" as the species detected.
+
+
+**Reading Data into R**
+
+Now we will read in the data using a *function* in R called **read.csv()**:
+
+```{r read-in-csv, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+#library(ggplot2)
+buEdges<-read.csv("point counts/BU_Edge_Communities_2021-2022_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+```
+
+R has taken a spreadsheet or table stored in a CSV file and saved it as an object in R called a *data frame*. The data frame stores the data we imported in a similar manner to a spreadsheet or table: observations as rows, variables or data types as columns. We will now examine the contents of the data frame *buEdges* that we have created.
+
+```{r look-at-data-frame, echo=TRUE, message=FALSE, warning=FALSE}
+str(buEdges)
+```
+
+Let's get rid of the recordings which have not yet been transcribed. 
+
+```{r look-at-data-frame2, echo=TRUE, message=FALSE, warning=FALSE}
+nrow(buEdges[buEdges$species_code=="NONE",])#2192
+nrow(buEdges[!buEdges$species_code=="NONE",])#2570
+
+nrow(buEdges[buEdges$observer_user_id==-1,])#2196
+nrow(buEdges[!buEdges$observer_user_id==-1,])#2566
+
+levels(as.factor(buEdges$aru_task_status))
+nrow(buEdges[buEdges$aru_task_status=="Transcribed",])#2557
+nrow(buEdges[!buEdges$aru_task_status=="Transcribed",])#2205
+
+
+buEdgesTrans<-buEdges%>%filter(aru_task_status=="Transcribed")
+```
+
+Our observations will be individual recordings. Each observation will have a count for each possible species in the dataset. We start by taking the variable *individual_count*, which is a character string, and converting it to a number variable. *Note*: the variable *individual_order* may be better as *max(individual_order)* will give us the number of distinct individuals thought to be in a recording.
+
+```{r species-per-recording, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.birdsonly<-buEdgesTrans
+buEdges.birdsonly$individual_count<-ifelse(buEdges.birdsonly$individual_count %in% c("CI 1","CI 2","CI 3","TMTT"), "0", buEdges.birdsonly$individual_count)
+
+buEdges.birdsonly$individual_count<-ifelse(buEdges.birdsonly$species_common_name == "NONE", "0", buEdges.birdsonly$individual_count)
+
+levels(as.factor(buEdges.birdsonly$individual_count))
+buEdges.birdsonly$individual_count<-as.integer(buEdges.birdsonly$individual_count)
+
+#Alternatively, you could do this
+buEdges.birdsonly<-buEdgesTrans%>%
+  mutate(individual_count = case_when(individual_count=="1" ~ 1,
+                                individual_count=="2" ~ 2,
+                                individual_count=="3" ~ 3,
+                                individual_count=="4" ~ 4,
+                                individual_count=="8" ~ 8,
+                                species_code=="NONE" ~ 0,
+                                individual_count=="0" ~ 0,
+                                individual_count=="CI 1" ~ 0,
+                                individual_count=="CI 2"~ 0,
+                                individual_count=="CI 3"~ 0,
+                                individual_count=="TMTT"~ 0))
+
+```
+
+Okay, now we have assigned proper number values to every observation in the variable *individual_count*, saved in the new data frame we created called *buEdges.birdsonly*. 
+
+**Aggregating data in base R**
+
+Now that we have counts of individual species, we can try summarizing the data using the variable *individual_order*. There are potentially multiple species per recording  and multiple recordings per site but most species will be undetected in most recordings and sites.
+
+```{r aggregate, echo=TRUE, message=FALSE, warning=FALSE}
+a<-Sys.time()
+tapply.spp<-tapply(buEdges.birdsonly$individual_order, list(buEdges.birdsonly$location, buEdges.birdsonly$recording_date_time, buEdges.birdsonly$species_code), max, na.rm=TRUE)
+b<-Sys.time()
+print(b-a)
+str(tapply.spp) 
+```
+The result is 3-d array (like a stack of spreadsheets on top of each other, with 1 row for each location, 1 column for each date & time in each spreadsheet). There is a separate spreadsheet for each species.
+
+Replace the NA values with zeros.
+
+```{r NAs-to-zeroes, echo=TRUE, message=FALSE, warning=FALSE}
+a<-Sys.time()
+for (i in 1:nlevels(as.factor(buEdges.birdsonly$recording_date_time))){
+  for (j in levels(as.factor(buEdges.birdsonly$species_code))){
+    tapply.spp[,i,j]<-ifelse(is.na(tapply.spp[,i,j]), 0, tapply.spp[,i,j])
+  }
+}
+b<-Sys.time()
+print(b-a)
+```
+
+**Manipulating data using *tidyverse* functions**
+
+The 3-d array can be challenging to work with. Alternatively, here is another way to create the same summary using *dplyr* and *tidyr* while keeping everything on a single 2-d data frame.
+
+```{r dplyr-tidyr, echo=TRUE, message=FALSE, warning=FALSE}
+spppersite<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, latitude, longitude)%>%
+  summarize(SpeciesRichness=nlevels(as.factor(species_common_name)))#a tibble
+spppersite<-data.frame(spppersite)
+str(spppersite)
+range(spppersite$SpeciesRichness)
+```
+
+The functions in various tidyverse packages will allow you to combine many separate analytical steps into a single step, making code cleaner and potentially more efficient. Separate analytical steps are joined into a single command using *pipes* (*%>%*).
+
+The number of species detected per recording after removing mammals, amphibians, and "species" of environmental noise ranged from `min(spppersite$SpeciesRichness)` to `max(spppersite$SpeciesRichness)` species. Actually it's between 0 and `max(spppersite$SpeciesRichness)` species since one of the species is "NONE".
+
+```{r dplyr-tidyr2, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, latitude, longitude, species_code)%>%
+  summarize(count=max(individual_order))#a tibble
+sppcountpersite<-data.frame(sppcountpersite)
+str(sppcountpersite)
+levels(as.factor(sppcountpersite$species_code))
+```
+
+We can see here that the non-bird species have been excluded from the summary data frame we created.
+
+Now let's create a new variable from the counts indicating simply if a species was detected or not.
+
+```{r dplyr-tidyr3, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite2<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, latitude, longitude, species_code)%>%
+  summarize(count=max(individual_order))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")#a tibble
+sppcountpersite2<-data.frame(sppcountpersite2)
+str(sppcountpersite2)
+```
+
+Now create a pivot table from the data (currently in *long format*) where there is a single row per site and recording and a separate column for each bird species. The value in each column for a given observation will be if the species was detected or not.
+
+```{r dplyr-tidyr4, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite3<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, latitude, longitude, species_code)%>%
+  summarize(count=max(individual_order))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")%>%
+  pivot_wider(names_from="species_code", values_from="detected")#a tibble
+sppcountpersite3<-data.frame(sppcountpersite3)
+str(sppcountpersite3)
+```
+
+So what's with all the *NA* values? *NA* stands for missing data for an observation lacking a value for a particular variable. When we obtained counts and detections of each species for each site and recording, we had data for each of the species that were in that recording but not for other species, whose values would be zeroes for both variables *count* and *detected*. So we need to convert those NA's to zeroes. Here's a way to do it.
+
+```{r dplyr-tidyr5, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite4<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, latitude, longitude, species_code)%>%
+  summarize(count=max(individual_order))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")%>%
+  pivot_wider(names_from="species_code", values_from="detected")%>%
+  select("location", "recording_date_time", sort(colnames(.)))%>%#orders columns alphabetically after setting "location" and "recording_date_time" as first 2 columns
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  mutate(SpeciesRichness = rowSums(across(where(is.numeric))))
+#a tibble
+sppcountpersite4<-data.frame(sppcountpersite4)
+str(sppcountpersite4)
+head(sppcountpersite4)
+```
+The following modification, making the pivot table for the variable "count" rather than the variable "detected" summarizes abundance instead.
+
+```{r dplyr-tidyr6, echo=TRUE, message=FALSE, warning=FALSE}
+sppabundpersite<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, latitude, longitude, species_code)%>%
+  summarize(count=max(individual_order))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")%>%
+  pivot_wider(names_from="species_code", values_from="count")%>%
+  select("location", "recording_date_time", "latitude", "longitude", sort(colnames(.)))%>%#orders columns alphabetically after setting "location" and "recording_date_time" as first 2 columns
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  mutate(SpeciesRichness = rowSums(across(where(is.numeric))))
+#a tibble
+sppabundpersite<-data.frame(sppabundpersite)
+str(sppabundpersite)
+head(sppabundpersite)
+```
+
+Let's create a categorical variable for the kind of site. Some of the points are along edges and some are within forests away from edges. The edges include harvest, road, seismic line, pipeline, and wellsite, and some miscellaneous points that we will drop. 
+
+```{r dplyr-tidyr7, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite4<-sppcountpersite4%>%
+  mutate(siteType=case_when(substr(location,1,1)=="H" ~ "Harvest",
+                            substr(location,1,1)=="P" ~ "Pipeline",
+                            substr(location,1,1)=="R" ~ "Road",
+                            substr(location,1,1)=="S" ~ "Seismic",
+                            substr(location,1,1)=="W" ~ "Well"))%>%
+  mutate(transectLoc=case_when(substr(location,3,4)=="E0" ~ "Edge",
+                            substr(location,3,4)=="P5" ~ "50m",
+                            substr(location,3,5)=="P10" ~ "100m",
+                            substr(location,3,5)=="P15" ~ "150m"))%>%
+  mutate(edgeDist=case_when(substr(location,3,4)=="E0" ~ 0,
+                            substr(location,3,4)=="P5" ~ 50,
+                            substr(location,3,5)=="P10" ~ 100,
+                            substr(location,3,5)=="P15" ~ 150))#assigns NA to any site that doesn't meet one of the cases
+
+sppabundpersite<-sppabundpersite%>%
+  mutate(siteType=case_when(substr(location,1,1)=="H" ~ "Harvest",
+                            substr(location,1,1)=="P" ~ "Pipeline",
+                            substr(location,1,1)=="R" ~ "Road",
+                            substr(location,1,1)=="S" ~ "Seismic",
+                            substr(location,1,1)=="W" ~ "Well"))%>%
+  mutate(transectLoc=case_when(substr(location,3,4)=="E0" ~ "Edge",
+                            substr(location,3,4)=="P5" ~ "50m",
+                            substr(location,3,5)=="P10" ~ "100m",
+                            substr(location,3,5)=="P15" ~ "150m"))%>%
+  mutate(edgeDist=case_when(substr(location,3,4)=="E0" ~ 0,
+                            substr(location,3,4)=="P5" ~ 50,
+                            substr(location,3,5)=="P10" ~ 100,
+                            substr(location,3,5)=="P15" ~ 150))#assigns NA to any site that doesn't meet one of the cases
+
+library(lubridate)
+
+sppcountpersite4$Hour<-format(as.POSIXct(sppcountpersite4$recording_date_time), format = "%H")
+sppcountpersite4$JulianDay<-yday(sppcountpersite4$recording_date_time)
+
+sppabundpersite$Hour<-format(as.POSIXct(sppabundpersite$recording_date_time), format = "%H")
+sppabundpersite$JulianDay<-yday(sppabundpersite$recording_date_time)
+```
+
+Remove the sites that haven't been assigned to a category.
+
+
+```{r dplyr-tidyr8, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite5<-sppcountpersite4%>%
+  filter(!is.na(siteType))
+
+sppabundpersite<-sppabundpersite%>%
+  filter(!is.na(siteType))
+write.csv(sppabundpersite, file="output/buEdges_speciesabundance.csv")
+```
+
+Now let's join some data that we've previously extracted to locations. Since there are potentially multiple observations (recording dates and times) per location, these observations will share the same extracted values.
+
+**Join Variables From Another File**
+
+```{r join, echo=TRUE, message=FALSE, warning=FALSE}
+predictors<-read.csv("output/buEdges_HarvestAreaAgeDistance.csv", header=TRUE)
+sppCounts.HarvestData<-merge(sppcountpersite5, predictors, by=c("location"))
+#str(sppCounts.HarvestData)
+```
+
+**Histograms**
+
+```{r histogram, echo=TRUE, message=FALSE, warning=FALSE}
+#hist(sppCounts.HarvestData$distHarvest)
+hist(sppCounts.HarvestData$distHarvest, breaks=seq(0,1005,by=5))
+```
+
+```{r histogram2, echo=TRUE, message=FALSE, warning=FALSE}
+range(sppCounts.HarvestData$SpeciesRichness)
+hist(sppCounts.HarvestData$SpeciesRichness, breaks=seq(0,16,by=1))
+hist(sppCounts.HarvestData$SpeciesRichness, breaks=seq(0,16,by=2))
+```
+
+**Box and Bar Plots**
+
+```{r boxplot, echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(sppCounts.HarvestData$distHarvest)
+boxplot(distHarvest~siteType,
+        data=sppCounts.HarvestData)
+```
+
+```{r boxplots-2, echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(sppCounts.HarvestData$SpeciesRichness)
+boxplot(SpeciesRichness~siteType,
+        data=sppCounts.HarvestData)
+boxplot(SpeciesRichness~edgeDist,
+        data=sppCounts.HarvestData)
+boxplot(SpeciesRichness~Hour,
+        data=sppCounts.HarvestData)
+```
+
+```{r barplot, echo=TRUE, message=FALSE, warning=FALSE}
+distHarvest_summ<-sppCounts.HarvestData%>%
+  group_by(siteType)%>%
+  summarize(distHarvest=mean(distHarvest))
+barplot(distHarvest_summ$distHarvest,
+  xlab="Site Type",
+  names.arg=c("Harvest","Pipeline","Road","Seismic","Well"),
+  ylab="Mean Nearest Distance to Harvest",
+  border="red",
+  col="blue")
+```
+
+```{r barplot2, echo=TRUE, message=FALSE, warning=FALSE}
+distEdge_summ<-sppCounts.HarvestData%>%
+  group_by(siteType, edgeDist)%>%
+  summarize(SpeciesRichness=mean(SpeciesRichness))%>%
+  mutate(Label=paste0(substr(siteType,1,1),"-",edgeDist))%>%
+  filter(!is.na(edgeDist))
+barplot(distEdge_summ$SpeciesRichness,
+  xlab="Site Type",
+  names.arg=distEdge_summ$Label,
+  ylab="Mean Species Richness",
+  #border="red",
+  col=as.factor(distEdge_summ$siteType))
+```
+
+**Scatter Plots**
+
+```{r scatterplot, echo=TRUE, message=FALSE, warning=FALSE}
+plot(sppCounts.HarvestData$distHarvest,
+     sppCounts.HarvestData$AreaHarvest500,
+     ylab="Harvest Area Within 500 m",
+     xlab="Distance to Nearest Harvest (m)", 
+     col="blue")
+```
+
+```{r scatterplot2, echo=TRUE, message=FALSE, warning=FALSE}
+#get species richness
+plot(sppCounts.HarvestData$JulianDay,
+     sppCounts.HarvestData$SpeciesRichness,
+     ylab="Species Richness",
+     xlab="Julian Day (# days since Jan. 1)", 
+     col="blue")
+
+plot(sppCounts.HarvestData$JulianDay,
+     sppCounts.HarvestData$SpeciesRichness,
+     ylab="Species Richness per Recording",
+     xlab="Julian Day (# days since Jan. 1)", 
+     col=as.factor(sppCounts.HarvestData$Hour),
+     pch=19)
+legend(175,
+       13, 
+       legend=c("5 AM", "10 PM"),
+       col=c("black", "red"), cex=0.8, pch=19)
+```
+
+**Run a Simple Model**
+
+```{r simple-model, echo=TRUE, message=FALSE, warning=FALSE}
+mod<-lm(SpeciesRichness~JulianDay, data=sppCounts.HarvestData)
+summary(mod)
+```
+
+```{r simple-model-2, echo=TRUE, message=FALSE, warning=FALSE}
+mod2<-lm(SpeciesRichness~Hour, data=sppCounts.HarvestData)
+summary(mod2)
+```
+
+```{r simple-model-3, echo=TRUE, message=FALSE, warning=FALSE}
+mod3<-lm(SpeciesRichness~JulianDay+Hour, data=sppCounts.HarvestData)
+summary(mod3)
+```
+
+```{r simple-model-4, echo=TRUE, message=FALSE, warning=FALSE}
+mod4<-lm(SpeciesRichness~siteType+JulianDay+Hour, data=sppCounts.HarvestData)
+summary(mod4)
+```
+
+```{r simple-model-5, echo=TRUE, message=FALSE, warning=FALSE}
+mod5<-lm(SpeciesRichness~siteType+edgeDist+JulianDay+Hour, data=sppCounts.HarvestData)
+summary(mod5)
+```
+
+```{r simple-model-6, echo=TRUE, message=FALSE, warning=FALSE}
+mod6<-lm(SpeciesRichness~siteType+edgeDist+siteType:edgeDist+JulianDay+Hour, data=sppCounts.HarvestData)
+summary(mod6)
+```
+

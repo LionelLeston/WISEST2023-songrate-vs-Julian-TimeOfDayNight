@@ -1,0 +1,336 @@
+---
+title: "Lesson 1. Import, Examine, Manipulate, Summarize Data in R"
+author: "L Leston"
+date: "2023-07-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate examples of importing, examining, manipulating, and summarizing data in R. We will show examples of using base R and the *tidyverse* packages like *tidyr* and *dplyr*.
+
+**Learning Outcomes**
+
+The student will distinguish between absolute and relative file path locations of data being imported to or exported from R.
+
+The student will be able to read in data into R.
+
+The student will understand advantages and disadvantages of using code to manipulate data in R (as opposed to manually manipulating data in Excel).
+
+The student will learn how to create new variables by performing R operations on existing variables in the data frame.
+
+The student will learn how to filter and summarize data in R.
+
+The student will learn how to export (save) data outside of R as a CSV or RData file.
+
+**Wild Trax data set: BU_Edge_Communities_2021-2022**
+
+The BU Edge Communities 2021-2022 data set consists of recordings from ARU stations set up along short transects starting at different kinds of manmade edges in Alberta's boreal forests. These edges are associated with either harvest of trees for timber or pulpwood or different types oil and gas footprint (seismic lines, pipelines, roads, well sites).
+
+The data we are looking at consist of detections of different species per recording at each ARU station. There can be multiple recordings per station, multiple species detected per recording, and one or more individuals per species detected per recording. *Note*: not all of the recordings have been transcribed yet, so there are some recordings with "NONE" as the species detected.
+
+**Absolute and Relative File Paths**
+
+First read in the data from a .CSV (comma-separated-values file). A CSV file is similar to a fancier text file or single Excel worksheet within an Excel spreadsheet file, though a CSV file has less functionality than an Excel spreadsheet. You can perform math and other Excel operations on existing columns to create new columns/variables. You can create graphs and plots in a CSV file. But unless you save the results of your functions, graphs, or plots as a new Excel spreadsheet rather than a CSV file, the CSV file will lose the functions and graphs you create. 
+
+When a CSV file or text file or other data source is read into R, a *data frame* is created. Like a CSV file or text file, a data frame stores different variables in columns and different observations in rows.
+
+Before reading in any data, let's look at the working directory we are in.
+
+```{r where-are-we, echo=TRUE, message=FALSE, warning=FALSE}
+getwd()
+```
+The working directory shows the *absolute file path* to the folder where this script is located. To read data into R, you can either: 1. specify the entire file path or address where that data is located.
+2. specify the address of a data relative to the location of the R script you are using. This is the *relative file path* of a file. 
+
+Right now, the data we want to import is in a folder called **point counts**. That folder is inside the same directory as this R script, so if we start our file path with the **point counts** folder, R will assume that the first part of the file's location is the same as the pathway to our working directory.
+
+**Reading Data into R**
+
+Now we will read in the data using a *function* in R called **read.csv()**:
+
+```{r read-in-csv, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges<-read.csv("point counts/BU_Edge_Communities_2021-2022_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+```
+
+R has taken a spreadsheet or table stored in a CSV file and saved it as an object in R called a *data frame*. The data frame stores the data we imported in a similar manner to a spreadsheet or table: observations as rows, variables or data types as columns. We will now examine the contents of the data frame *buEdges* that we have created.
+
+```{r look-at-data-frame, echo=TRUE, message=FALSE, warning=FALSE}
+str(buEdges)
+```
+
+What does the **str()** function do?
+
+```{r look-at-data-frame2, echo=TRUE, message=FALSE, warning=FALSE}
+names(buEdges)
+```
+
+What does the **names()** function do?
+
+```{r look-at-data-frame3, echo=TRUE, message=FALSE, warning=FALSE}
+ncol(buEdges)
+```
+
+What does the **ncol()** function do?
+
+```{r look-at-data-frame4, echo=TRUE, message=FALSE, warning=FALSE}
+nrow(buEdges)
+```
+
+What does the **nrow()** function do?
+
+According to R, there are `r ncol(buEdges)` columns in this data frame and `r nrow(buEdges)` observations in this data frame.
+
+**Slicing and Filtering**
+
+There are lots of functions in basic R that can be used for examining, slicing, filtering, and manipulating data. There are also packages that can be imported into R to allow you to do additional functions or the same functions more efficiently with less code.
+
+```{r look-at-data-frame5, echo=TRUE, message=FALSE, warning=FALSE}
+head(buEdges)
+buEdges.10obs<-buEdges[1:10,]
+str(buEdges.10obs)
+names(buEdges.10obs)
+```
+
+What is the *head* function doing?
+
+What is the difference between *buEdges.10obs* and the original data frame *buEdges*?
+
+```{r look-at-data-frame6, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.10col<-buEdges[,1:10]
+str(buEdges.10col)
+names(buEdges.10col)
+```
+
+What is the difference between *buEdges.10col* and the original data frame *buEdges*?
+
+```{r look-at-data-frame7, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.10_10<-buEdges[10,10]
+buEdges.10_10
+```
+What is *buEdges.10_10* supposed to be?
+
+The square brackets after the data frame name indicate to R that we want to look for something or some things inside that data frame. We'll use these brackets some more in a bit. But first let's look at some individual variables. When you refer to one variable inside a data frame, typically you write the data frame first, then a dollar sign, then the name of the column for that variable inside the data frame.
+
+```{r look-at-data-frame8, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+buEdges$species_common_name
+```
+Running the name of a specific variable prints all the observations in that variable's column (up to a threshold number (*1000*) within really big files, unless you opt to print everything). Since the data within *buEdges$species_common_name* are character strings, we might want to look at the possible values this variable takes in the data frame.
+
+```{r look-at-data-frame9, echo=TRUE, message=FALSE, warning=FALSE}
+nlevels(as.factor(buEdges$species_common_name))#convert character strings to factors
+#levels(as.factor(buEdges$species_common_name))#convert character strings to factors
+#table(buEdges$species_common_name)#base R
+#knitr::kable(table(buEdges$species_common_name))#table in R Markdown
+```
+
+There are `r nlevels(as.factor(buEdges$species_common_name))` in the variable *buEdges$species_common_name*. The actual number of animal species is a bit less since the "species" include "NONE", many unknown unconfirmed individuals that might belong to an existing species in the list, and different types of noise (e.g., *Heavy continuous industrial noise*) as "species". The *table* function counts the number of observations assigned to each species' common name
+
+Let's look at a number variable.
+
+```{r look-at-data-frame10, echo=TRUE, message=FALSE, warning=FALSE}
+#buEdges$individual_count
+nlevels(as.factor(buEdges$individual_count))#Convert to factor first
+levels(as.factor(buEdges$individual_count))#Convert to factor first
+```
+Hmm, not a number variable yet since all the numbers are in quotation marks, so this variable is still a character variable. We can convert the characters described as numbers to actual numbers, but we have to decide how to treat the categories like "", "CI 1", "CI 2", "CI 3", and "TMTT". To do so, let's try and figure out what those count categories refer to based on the species that get those types of count assignments:
+
+```{r look-at-data-frame11, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.countQQ<-buEdges[buEdges$individual_count=="",]
+levels(as.factor(buEdges.countQQ$species_common_name))
+#table(buEdges.countQQ$species_common_name)#base R
+knitr::kable(table(buEdges.countQQ$species_common_name))#R Markdown
+```
+So when buEdges$individual_count gets a value of "", it's because no species were detected for that recording (which may possibly be if the recording hasn't been transcribed yet). But for now, we might reclassify that value as a "0".
+
+```{r look-at-data-frame12, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.countCITMTT<-buEdges[buEdges$individual_count %in% c("CI 1","CI 2","CI 3","TMTT"),]
+levels(as.factor(buEdges.countCITMTT$species_common_name))
+#table(buEdges.countCITMTT$species_common_name)#base R
+knitr::kable(table(buEdges.countCITMTT$species_common_name))#R Markdown
+```
+Some of the species assigned a count value of CI 1/2/3 or TMTT (e.g., frogs, cicadas, birds moving in large flocks) will often/usually occur in numbers too large to accurately count individuals. We might choose a maximum number value (e.g., 10) for some species. Since we focus on birds, we may also want to simply filter out and remove any non-bird observations. We could just remove those observations from the data frame. On the other hand, just in case a species with a CI 1/2/3 or TMTT count is the only species mentioned in a particular recording, it may be better to change the counts of non-bird species to a zero.
+
+```{r look-at-data-frame13, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.birdsonly<-buEdges
+buEdges.birdsonly$individual_count<-ifelse(buEdges.birdsonly$individual_count %in% c("CI 1","CI 2","CI 3","TMTT"), "0", buEdges.birdsonly$individual_count)
+
+buEdges.birdsonly$individual_count<-ifelse(buEdges.birdsonly$species_common_name == "NONE", "0", buEdges.birdsonly$individual_count)
+
+levels(as.factor(buEdges.birdsonly$individual_count))
+```
+Okay, now we have assigned proper number values to every observation in the variable *individual_count*, saved in the new data frame we created called *buEdges.birdsonly*. We can now convert the character string variable *individual_count* to a numeric variable *individual_count* and perform some operations on it.
+
+```{r look-at-data-frame14, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges.birdsonly$individual_count<-as.integer(buEdges.birdsonly$individual_count)
+#changes character string to integer variable
+#table(buEdges.birdsonly$individual_count)# base R
+knitr::kable(table(buEdges.birdsonly$individual_count))#R Markdown
+range(buEdges.birdsonly$individual_count)
+min(buEdges.birdsonly$individual_count)
+max(buEdges.birdsonly$individual_count)
+mean(buEdges.birdsonly$individual_count)
+median(buEdges.birdsonly$individual_count)
+sd(buEdges.birdsonly$individual_count)
+mean(buEdges.birdsonly[buEdges.birdsonly$individual_count>0,]$individual_count)
+median(buEdges.birdsonly[buEdges.birdsonly$individual_count>0,]$individual_count)
+```
+**Boolean operations**
+
+Boolean operations involve TRUE/FALSE statements and are often used in filtering or if/then statements. We've seen examples of their use above in reclassifying values of a variable and filtering data frames, where a double-equals sign ("==") is used. Greater-than and less-than symbols can also be used within Boolean operations. Placing an exclamation mark at the beginning of a Boolean expression indicates that you want the negative of that expression, i.e., *buEdges.birdsonly$individual_count > 1* means species counts are greater than one, while *!buEdges.birdsonly$individual_count > 1* means species counts are NOT greater than one, or that species counts are less than/equal to one.
+
+**Aggregating data in base R**
+
+Now that we have counts of individual species, we can try summarizing the data. There are potentially multiple species per recording  and multiple recordings per site but most species will be undetected in most recordings and sites.
+
+```{r aggregate, echo=TRUE, message=FALSE, warning=FALSE}
+a<-Sys.time()
+tapply.spp<-tapply(buEdges.birdsonly$individual_count, list(buEdges.birdsonly$location, buEdges.birdsonly$species_code), sum, na.rm=TRUE)
+b<-Sys.time()
+print(b-a)
+str(tapply.spp)
+```
+
+Replace the NA values with zeros.
+
+```{r NAs-to-zeroes, echo=TRUE, message=FALSE, warning=FALSE}
+a<-Sys.time()
+for (i in 1:ncol(tapply.spp)){
+  tapply.spp[,i]<-ifelse(is.na(tapply.spp[,i]), 0, tapply.spp[,i])
+}
+print(b-a)
+#knitr::kable(tapply.spp)
+```
+
+**Manipulating data using *tidyverse* functions**
+
+Data can be manipulated in many different ways using simply the functions in base R, but eventually you will probably want to learn alternative ways of doing the same kinds of data manipulation with functions from R packages in the *tidyverse*. Doing so will involve importing additional R packages that are installed separately from base R. Once installed, either using the *install.packages()* function or manually installing them from the "Tools" drop-down menu in RStudio, packages are imported into R with the *library* function, as follows:
+
+```{r dplyr-tidyr, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+spppersite<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time)%>%
+  summarize(SpeciesRichness=nlevels(as.factor(species_common_name)))#a tibble
+spppersite<-data.frame(spppersite)
+str(spppersite)
+range(spppersite$SpeciesRichness)
+```
+
+The functions in various tidyverse packages will allow you to combine many separate analytical steps into a single step, making code cleaner and potentially more efficient. Separate analytical steps are joined into a single command using *pipes* (*%>%*).
+
+The number of species detected per recording after removing mammals, amphibians, and "species" of environmental noise ranged from `min(spppersite$SpeciesRichness)` to `max(spppersite$SpeciesRichness)` species. Actually it's between 0 and `max(spppersite$SpeciesRichness)` species since one of the species is "NONE".
+
+```{r dplyr-tidyr2, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time,species_code)%>%
+  summarize(count=max(individual_count))#a tibble
+sppcountpersite<-data.frame(sppcountpersite)
+str(sppcountpersite)
+levels(as.factor(sppcountpersite$species_code))
+```
+
+We can see here that the non-bird species have been excluded from the summary data frame we created.
+
+Now let's create a new variable from the counts indicating simply if a species was detected or not.
+
+```{r dplyr-tidyr3, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite2<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, species_code)%>%
+  summarize(count=max(individual_count))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")#a tibble
+sppcountpersite2<-data.frame(sppcountpersite2)
+str(sppcountpersite2)
+```
+
+Now create a pivot table from the data (currently in *long format*) where there is a single row per site and recording and a separate column for each bird species. The value in each column for a given observation will be if the species was detected or not.
+
+```{r dplyr-tidyr4, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite3<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, recording_date_time, species_code)%>%
+  summarize(count=max(individual_count))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")%>%
+  pivot_wider(names_from="species_code", values_from="detected")#a tibble
+sppcountpersite3<-data.frame(sppcountpersite3)
+str(sppcountpersite3)
+```
+
+So what's with all the *NA* values? *NA* stands for missing data for an observation lacking a value for a particular variable. When we obtained counts and detections of each species for each site and recording, we had data for each of the species that were in that recording but not for other species, whose values would be zeroes for both variables *count* and *detected*. So we need to convert those NA's to zeroes. Here's a way to do it.
+
+```{r dplyr-tidyr5, echo=TRUE, message=FALSE, warning=FALSE}
+sppcountpersite4<-buEdges.birdsonly%>%
+  filter(!species_common_name %in% c("Boreal Chorus Frog","Cicada","Coyote","Domestic Cow","Domestic Dog",
+                                     "Heavy wind","Heavy continuous industrial noise",
+                                     "Light Background Noise","Light rain","Light traffic",
+                                     "Light wind","Light continuous industrial noise",
+                                     "Moderate Background Noise","Moderate rain","Moderate traffic",
+                                     "Moderate wind","Moderate continuous industrial noise",
+                                     "Northern Leopard Frog","Red Squirrel",
+                                     "Unidentified Mammal","Unidentified signal",
+                                     "White-tailed Deer","Wolf","Wood Frog"))%>%
+  group_by(location, species_code)%>%
+  summarize(count=max(individual_count))%>%
+  mutate(detected=ifelse(count>0,1,0))%>%
+  filter(!species_code=="NONE")%>%
+  pivot_wider(names_from="species_code", values_from="detected")%>%
+  select("location", sort(colnames(.)))%>%#orders columns alphabetically after setting "location" as first column
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))
+#a tibble
+sppcountpersite4<-data.frame(sppcountpersite4)
+str(sppcountpersite4)
+head(sppcountpersite4)
+```
+Finally, save this data outside of R, as a CSV file and alternatively as an RData file.
+
+```{r save-data, echo=TRUE, message=FALSE, warning=FALSE}
+write.csv(sppcountpersite4, file="output/buEdges_speciescounts.csv")
+save(sppcountpersite4, file="output/buEdges_speciescounts.RData")
+```
+
+
+**Other analysis programs**
+
+R is not the only analysis program you can use to manipulate data by writing code. Some researchers use other programs like *Python* or *JAVA* or something else. There is a package or module in Python called *pandas* that can be used for slicing, manipulating, and examining data frames. *pandas* does similar tasks like the base code in R or the *tidyverse* packages we've seen.

@@ -1,0 +1,319 @@
+---
+title: "Lesson 4. GIS Data Extraction in R: Habitat Fragmentation Metrics"
+author: "L Leston"
+date: "2023-07-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Introduction**
+
+In previous lessons, we discussed the advantages and disadvantages of broad types of GIS data - Shapefiles or *vector data*, and *raster data*, and how to extract each type of data to survey points. Until recently, shapefile data was generally available at finer resolution than raster data, but increasingly raster data is available at finer spatial, spectral, and temporal resolution, especially on platforms like Google Earth Engine. 
+
+We might also consider taking detailed shape-file data and *rasterizing* it (converting it to a raster layer based on the values of a particular attribute in the polygons). Once the data is rasterized, we can calculate many different metrics of *habitat fragmentation*, *habitat connectivity*, or *habitat pattern*, based on the adjacency of cells of same or different type.
+
+**Learning Objectives**
+
+We will use some of what we have learned about manipulating shapefile and raster data to obtain measures of habitat fragmentation and pattern for survey points. Such metrics have been used in many landscape ecology studies. The **landscapemetrics** package will be used to obtain metrics of habitat fragmentation used in landscape ecology studies.
+
+**Learning Outcomes**
+
+**Wild Trax data set: BU_Edge_Communities_2021-2022**
+
+The BU Edge Communities 2021-2022 data set consists of recordings from ARU stations set up along short transects starting at different kinds of manmade edges in Alberta’s boreal forests. These edges are associated with either harvest of trees for timber or pulpwood or different types oil and gas footprint (seismic lines, pipelines, roads, well sites).
+
+We will use the *landscapemetrics* package to obtain metrics of habitat pattern and fragmentation. Calculating these metrics is a form of raster analysis: where the habitat data are in the form of shapefiles (*sf objects*), we can use the *fasterize* package to create rasters from those shapefiles.
+
+```{r get-edge-points, echo=TRUE, message=FALSE, warning=FALSE}
+#Get libraries
+library(dplyr)
+library(tidyr)
+library(sf)
+library(tidyverse)
+library(ggspatial)
+library(raster)
+library(maptools)
+library(rgdal)
+library(sp)
+library(terra)
+
+#Get point count site and year
+a<-Sys.time()
+#data
+buEdges<-read.csv("point counts/BU_Edge_Communities_2021-2022_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+buEdges$Year<-substr(buEdges$recording_date_time,1,4)#extracts year
+buEdges.SSYR<-unique(buEdges[,c("location","Year","project_id","latitude","longitude")])
+#get rid of any points lacking coordinates
+buEdges.SSYR<-buEdges.SSYR%>%
+  filter(!is.na(latitude))%>%
+  filter(!is.na(longitude))
+#buEdges.SSYR<-buEdges.SSYR[!is.na(latitude),]   #in base R
+#buEdges.SSYR<-buEdges.SSYR[!is.na(longitude),]  #in base R
+
+ssyr.sf <- st_as_sf(x = buEdges.SSYR,                         
+               coords = c("longitude", "latitude"),
+               crs = "+init=epsg:4326 +proj=longlat +ellps=WGS84 
++datum=WGS84 +no_defs +towgs84=0,0,0")
+
+
+ssyr.sf<-st_transform(ssyr.sf, "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs") #transform the points to same coordinate system as the harvest data (in meters) we will be importing next
+b<-Sys.time()
+print(b-1)
+
+ssyr.sf
+```
+
+Now get the harvest data.
+
+```{r get-harvest, echo=TRUE, message=FALSE, warning=FALSE}
+#Get harvest shapefile
+harvest<-st_read("footprint/harvest2019corr.shp")
+harvest<-st_transform(harvest, "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs")
+```
+This provincial harvest data is *theoretically* up to date as of 2019, keeping in mind that it's a shape-file and such large shape-files may not be updated consistently everywhere. All of the point counts we are looking at are more recent than 2019, and after excluding points known to have recent harvest (2019 or later), all harvest blocks in the shape-file should already be present and accounted for at each point count station. 
+
+Clip the harvest shapefile data to a bounding box defined by the retention point counts.
+
+```{r get-bbox-retn-points, echo=TRUE, message=FALSE, warning=FALSE}
+box<-ssyr.sf%>%st_bbox()
+print("Bounding box of point counts:")
+box
+box2<-harvest%>%st_bbox()
+print("Bounding box of harvest shape-file polygons")
+box2
+#slightly bigger bounding box for the point counts
+box3 = c(xmin = 187000, ymin = 5469000, xmax = 822000, ymax = 6574000)
+harvest.retn<-st_crop(harvest, box3)
+print("Bounding box of clipped harvest, at least 1 km larger on all sides than bounding box for point counts")
+harvest.retn%>%st_bbox()
+```
+
+Now import the *fasterize* and *landscapemetrics* libraries:
+
+```{r import-fasterize-landscapemetrics, echo=TRUE, message=FALSE, warning=FALSE}
+library(fasterize)
+#a faster version of raster::rasterize that works with sf objects
+library(landscapemetrics)
+```
+
+Try working with a single point first. Create a landscape by clipping harvest within a certain distance, rasterizing that harvest, and classifying anything that isn't harvest as a separate cover class.
+
+```{r single-landscape, echo=TRUE, message=FALSE, warning=FALSE}
+onepoint1kBuffer<-ssyr.sf%>%
+  filter(location=="H-CC-10-1")%>%#gets a single location from a clear-cut
+  st_buffer(1000)#creates a circular polygon with 1000-m radius around the point
+
+harvest1k<-harvest.retn%>%
+  st_crop(onepoint1kBuffer)#clips all harvest polygons to just those within the bounding box of the 1-km point buffer
+
+print("Harvest shapefile clipped to 1 kilometer from point:")
+
+#plot harvest areas within 1 km, showing year of harvest and age of harvest at time of point count
+onepoint1kBuffer$Year<-as.integer(onepoint1kBuffer$Year)
+harvest1k$AGE<-onepoint1kBuffer$Year-harvest1k$YEAR
+plot(harvest1k["AGE"])
+
+r <- raster(onepoint1kBuffer, res = 10)
+r <- fasterize(st_collection_extract(harvest1k, "POLYGON"), r, field = "AGE", fun="first")
+#fun = how to combine overlapping polygons (there shouldn't be any).
+#Currently takes "sum", "first", "last", "min", "max", "count", or "any".
+
+print("Age of harvest blocks within 1 km at time of point count")
+
+plot(r)
+
+print("Specific harvest ages within 1 km of point count")
+levels(as.factor(values(r)))
+
+#Create a single "cover class" for unharvested areas
+r[is.na(r)]<-200
+levels(as.factor(values(r)))
+r2<-r%>%
+  crop(onepoint1kBuffer)%>%
+  mask(onepoint1kBuffer)
+
+print("Forest age classes within 1 km at time of point count (unharvested = 200)")
+
+plot(r2)
+```
+The oldest harvest within 1 km of the point count is 56 years old at the time of the point count.
+
+Individual metrics in the *landscapemetrics* package can be calculated with functions at the patch-level,
+class-level, and landscape-level. There are many metrics to choose from. For birds within harvest blocks, the amount of unharvested forest edge might be a useful metric of forest retention since it will increase with the number and size of forest patches.
+
+```{r calculate-unharvested-forest-edge, echo=TRUE, message=FALSE, warning=FALSE}
+r.te.unharvested <- r2 %>% lsm_c_te(directions=4) %>% filter(class==200)#value assigned to unharvested forest
+r.totaledge.unharvested<-r.te.unharvested$value
+```
+
+There is `r r.totaledge.unharvested` metres of unharvested forest edge within 1 km of this point. Suppose we want to include any forest that is old enough to have reached pole-stage within forest edge (>25 years to be safe).
+
+```{r calculate-pole-or-older-forest-edge, echo=TRUE, message=FALSE, warning=FALSE}
+r.te.older <- r2 %>% lsm_c_te(directions=4) %>% filter(class >25)#%in% c(26,27,31,32,56,200))#values assigned to forests>25 years
+#calculates separate total edge for each age-class
+r.totaledge.older<-sum(r.te.older$value)
+```
+
+There is `r r.totaledge.older` metres of forest edge (any forests older than 25 years) within 1 km of this point. 
+
+Since this is a study of bird communities in relation to edges, perhaps we would investigate if certain old-growth forest bird species need a minimum size of forest habitat from forest edges. In other words the amount of core habitat.
+
+```{r calculate-core-habitat-for-old-growth forest-birds, echo=TRUE, message=FALSE, warning=FALSE}
+#Metric output could vary with cell resolution, which will also influence what we use as inputs for edge metrics
+#For example, edge depth 10 * 10-m resolution = core habitat that is at least 100 m away from any edge
+r.cai.forest <- r2 %>% lsm_c_cai_mn(directions=4, consider_boundary = FALSE, edge_depth = 10) %>% filter(class>80)
+#calculates separate core area index for each filtered age-class
+#The core area index is the percentage of core area in relation to patch area. A cell is defined as core area if the cell has no neighbour with a different value than itself (rook's case).
+r.corehabitat<-mean(r.cai.forest$value)
+```
+
+Mean forest core area index (relative percentage of forest age-classes (e.g. 200 years old) that is at least 100 m from a forest edge: `r r.corehabitat`
+
+What if we want to know the amount of edge between two specific cover types, i.e., for a species that uses resources in two different, particular habitats. For example, Brown-headed Cowbirds that feed in open areas but target forest-nesting birds
+
+```{r calculate-amount-interface, echo=TRUE, message=FALSE, warning=FALSE}
+r3<-r2
+r3[values(r3)==17]<-20#changes age 17 to age 20 so it's as if they are same cover type
+r3[values(r3)==26]<-NA
+r3[values(r3)==27]<-NA
+r3[values(r3)==31]<-NA
+r3[values(r3)==32]<-NA
+r3[values(r3)==56]<-NA
+
+#gets rid of all but two cover types
+plot(r3)
+r3 %>% lsm_c_te(directions=4)
+#shows that only 3 cover types are being considered in edge calculation
+#this is the total edge between coniferous forest and shrubland
+
+r2.te.unharvested.open <- r3 %>% lsm_c_te(directions=4) %>% filter(class==200)
+r2.totaledge.unharvested.open<-r2.te.unharvested.open$value
+```
+
+There is `r r2.totaledge.unharvested.open` metres of edge where unharvested older forests border open cutblock lands 20 years old or less.
+
+Now let's loop through all of the point counts and calculating these landscape metrics for each point count.
+
+```{r loop-thru-all-counts, echo=TRUE, message=FALSE, warning=FALSE}
+estimLandscapeMetrics<-function(pointfile, bufferDist, landscapeCellSize){
+    ss.sf.summary<-list()
+    for (i in 1:100){#first 100 points in shapefile
+    #for (i in 1:nrow(ssyr.sf)){#all points in shapefile
+      pointBuffer<-pointfile[i,]%>%
+        st_buffer(bufferDist)#creates a circular polygon with  radius around the point that you specify
+
+      harvestXm<-harvest.retn%>%
+        st_crop(pointBuffer)#clips all harvest polygons to just those within the bounding box of the X-m point buffer
+
+      #print("Harvest shapefile clipped to X m from point:")
+      if (nrow(harvestXm)>0) {
+
+        pointBuffer$Year<-as.integer(pointBuffer$Year)
+        harvestXm$AGE<-pointBuffer$Year-harvestXm$YEAR
+        #plot(harvest1k)
+
+        r <- raster(pointBuffer, res = landscapeCellSize)
+        #use pointBuffer as landscape being rasterized
+        #harvestXm is cropped to pointBuffer's bounding box but may not necessarily be located within pointBuffer
+        r <- fasterize(st_collection_extract(harvestXm, "POLYGON"), r, field = "AGE", fun="first")
+  
+  
+        #Create a single "cover class" for unharvested areas
+        r[is.na(r)]<-200 #oldest harvest around any retention point counts will be ~100 years old or less
+        #levels(as.factor(values(r)))
+
+        r2<-r%>%
+          crop(pointBuffer)%>%
+          mask(pointBuffer)
+  
+        #Calculate total edge of old-growth or unharvested forest 
+        r.te.unharvested <- r2 %>% lsm_c_te(directions=4) %>% filter(class>80)#value assigned to old-growth or unharvested forest (which has already been set to 200 years old)
+        r.totaledge.unharvested<-sum(r.te.unharvested$value)
+  
+        #Calculate total edge of any forest (25 years or older)
+        r.te.older <- r2 %>% lsm_c_te(directions=4) %>% filter(class >25)#values assigned to forests>25 years
+        #calculates separate total edge for each age-class
+        r.totaledge.older<-sum(r.te.older$value)
+        
+        r3<-r2
+        r3[values(r3)>80]=200
+        #treat all values > 80 as same class (200 years old)
+        
+        #Calculate core habitat (>100 m from forest edge) for old-growth forest bird species
+        r.cai.oldforest <- r3 %>% lsm_c_cai_mn(directions=4, consider_boundary = FALSE, edge_depth = 10) %>% filter(class==200)
+        #calculates separate core area index for each age-class
+        r.corehabitat<-mean(r.cai.oldforest$value)
+  
+        #Calculate amount of interface between open lands (cutblocks <= 20 years old) and old or unharvested forests
+        r4<-r2
+        r4[values(r4)<20]<-1#any age < 20 becomes a 1
+        r4[values(r4)>80]<-2#unharvested forest (age 200) becomes a 2
+        r4[values(r4)>2]<-NA#any age that wasn't originally <20 or >80 becomes NA
+ 
+        #gets rid of all but two cover types
+        #plot(r3)
+        r4 %>% lsm_c_te(directions=4)
+        #shows that only 3 cover types are being considered in edge calculation
+        #this is the total edge between coniferous forest and shrubland
+
+        r4.te.unharvested.open <- r4 %>% lsm_c_te(directions=4) %>% filter(class==2)
+        r4.totaledge.unharvested.open<-r4.te.unharvested.open$value
+
+        project_id.i<-pointfile[i,]$project_id
+        location.i<-pointfile[i,]$location
+        Year.i<-pointfile[i,]$Year
+        #produce summary
+        ss.sf.summary[[i]]<-data.frame(project_id=project_id.i,
+                                       location=location.i,
+                                       Year=Year.i,
+                                       CoreHabitat=r.corehabitat,
+                                       OldForestEdge=r.totaledge.unharvested,
+                                       TotalForestEdge=r.totaledge.older,
+                                       Unharvested.Open.Interface=r4.totaledge.unharvested.open
+                                     )
+
+      }
+      else {
+        project_id.i<-pointfile[i,]$project_id
+        location.i<-pointfile[i,]$location
+        Year.i<-as.integer(pointfile[i,]$Year)
+        #produce summary
+        ss.sf.summary[[i]]<-data.frame(project_id=project_id.i,
+                                       location=location.i,
+                                       Year=Year.i,
+                                       CoreHabitat=100, 
+                                       OldForestEdge=0,
+                                       TotalForestEdge=0,
+                                       Unharvested.Open.Interface=0
+                                     )
+        #Prints NA values if there is zero footprint within buffer.
+      }
+      #print(paste0("point ",i," done")) #progress indicator
+    }
+    summaries<-do.call(rbind, ss.sf.summary)
+    return(summaries)
+}
+```
+
+Now run the function for estimating landscape metrics, specifying the size of the landscape and the resolution of the rasters. Keep in mind that the larger the landscape or the finer the resolution or both, the longer the analysis will take to process.
+
+```{r calc-landscape-metrics, echo=TRUE, message=FALSE, warning=FALSE}
+a<-Sys.time()
+bufferDist<-1000
+landscapeCellSize<-10
+pointfile<-ssyr.sf
+summaries<-estimLandscapeMetrics(pointfile,bufferDist,landscapeCellSize) #buffer distance 1000 m, resolution 10 m
+summaries<-data.frame(summaries)
+b<-Sys.time()
+print(b-a)
+write.csv(summaries, file="output/buEdges_LandscapeMetrics.csv")
+
+```
+
+There are a lot more possible landscape metrics that could be calculated for the raster landscapes we create around each point count. Suggested reading: "*Hesselbarth, M. H., Sciaini, M., With, K. A., Wiegand, K., & Nowosad, J. (2019). landscapemetrics: an open‐source R tool to calculate landscape metrics. Ecography, 42(10), 1648-1657*. https://doi.org/10.1111/ecog.04617".
+
+Also note that we've just used one type of footprint in calculating the fragmentation metrics in this lesson, but we should really use multiple footprint types, forest ages, and water bodies when creating the rasterized landscapes around point counts.

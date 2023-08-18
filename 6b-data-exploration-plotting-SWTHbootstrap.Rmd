@@ -1,0 +1,698 @@
+---
+title: "Lesson 6b. Data Exploration and Plotting in R - Swainson's Thrush Data - Adding Bootstrap"
+author: "L Leston"
+date: "2023-07-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate the concept of bootstrapping when you have enough data to do so. 
+
+**Learning Outcomes**
+
+In addition to the outcomes from Lesson 6 below, the student will 
+generate bootstrap sample datasets, run a model and store model results from each sample, then obtain predictions from each stored model run's coefficients, and display those predictions in a *matrix plot*.
+
+The student will be able to manipulate data frames to get data ready for plotting.
+
+The student will explore how data within a single variable is distributed (*histogram*).
+
+The student will be able to generate box plots to compare values of a variable within two or more categorical groups (*box, bar plots*).
+
+The student will be able to generate plots showing how one numeric variable's values change with the values of another numeric variable (*scatter plot*).
+
+The student will be able to run a simple *model* describing a theoretical relationship between two or more variables. Model examples include a *t-test*, a *regression*, an *analysis of variance (ANOVA)*, and a *generalized linear model*.
+
+The student will merge predictor data (*independent or explanatory* variables for each site) to bird count data to test for a relationship between bird abundance (the *dependent variable*) and an *independent variable*.
+
+**Wild Trax data set: BU_Hart(s)-SWTH-NorthVsSouthSongRate-BU_2021_main_report**
+
+The data we are looking at consist of detections of SWTH per recording at each ARU station. There is one recording per hour within a 24-hour period at each station on a particular date, with one or more individuals per species detected per recording. The intent is to look at how detections of SWTH change over a 24-hour cycle and ideally how the relationship between time of day and song activity varies with latitude. *Note*: not all of the recordings have been transcribed yet, so there are some recordings with "NONE" as the species detected.
+
+
+**Reading Data into R**
+
+Now we will read in the data using a *function* in R called **read.csv()**:
+
+```{r read-in-csv, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+#library(ggplot2)
+ToD_T_W<-read.csv("point counts/BU_Hart(s)-SWTH-NorthVsSouthSongRate-BU_2021_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+```
+
+R has taken a spreadsheet or table stored in a CSV file and saved it as an object in R called a *data frame*. The data frame stores the data we imported in a similar manner to a spreadsheet or table: observations as rows, variables or data types as columns. We will now examine the contents of the data frame *ToD_T_W* that we have created.
+
+```{r look-at-data-frame, echo=TRUE, message=FALSE, warning=FALSE}
+str(ToD_T_W)
+```
+
+Let's get rid of the recordings which have not yet been transcribed. 
+
+```{r look-at-data-frame2, echo=TRUE, message=FALSE, warning=FALSE}
+nrow(ToD_T_W[ToD_T_W$species_code=="NONE",])#3242
+nrow(ToD_T_W[!ToD_T_W$species_code=="NONE",])#2578
+
+nrow(ToD_T_W[ToD_T_W$observer_user_id==-1,])#2278
+nrow(ToD_T_W[!ToD_T_W$observer_user_id==-1,])#3542
+
+levels(as.factor(ToD_T_W$aru_task_status))
+#"Bad Weather" "In Progress" "New"         "Transcribed"
+nrow(ToD_T_W[ToD_T_W$aru_task_status=="Transcribed",])#3464
+nrow(ToD_T_W[!ToD_T_W$aru_task_status=="Transcribed",])#2356
+
+
+ToD_T_WTrans<-ToD_T_W%>%filter(aru_task_status=="Transcribed")
+```
+
+Our observations will be individual recordings. Each observation will have a count for each possible species in the dataset. We start by taking the variable *individual_count*, which is a character string, and converting it to a number variable. *Note*: the variable *individual_order* may be better as *max(individual_order)* will give us the number of distinct individuals thought to be in a recording.
+
+```{r species-per-recording, echo=TRUE, message=FALSE, warning=FALSE}
+ToD_T_W.birdsonly<-ToD_T_WTrans
+ToD_T_W.birdsonly$individual_count<-ifelse(ToD_T_W.birdsonly$individual_count %in% c("CI 1","CI 2","CI 3","TMTT"), "0", ToD_T_W.birdsonly$individual_count)
+
+ToD_T_W.birdsonly$individual_count<-ifelse(ToD_T_W.birdsonly$species_common_name == "NONE", "0", ToD_T_W.birdsonly$individual_count)
+
+levels(as.factor(ToD_T_W.birdsonly$individual_count))
+ToD_T_W.birdsonly$individual_count<-as.integer(ToD_T_W.birdsonly$individual_count)
+
+#Alternatively, you could do this
+ToD_T_W.birdsonly<-ToD_T_WTrans%>%
+  mutate(individual_count = case_when(individual_count=="1" ~ 1,
+                                individual_count=="2" ~ 2,
+                                individual_count=="3" ~ 3,
+                                individual_count=="4" ~ 4,
+                                individual_count=="8" ~ 8,
+                                species_code=="NONE" ~ 0,
+                                individual_count=="0" ~ 0,
+                                individual_count=="CI 1" ~ 0,
+                                individual_count=="CI 2"~ 0,
+                                individual_count=="CI 3"~ 0,
+                                individual_count=="TMTT"~ 0))
+
+```
+
+Now that we have counts of individual species, we can try summarizing the data using the variable *individual_order*.  
+
+**Manipulating data using *tidyverse* functions**
+
+Summarize individual counts of each species at each site in each recording using *dplyr* and *tidyr* while keeping everything on a single 2-d data frame.
+
+```{r dplyr-tidyr, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording<-ToD_T_W.birdsonly%>%
+  group_by(location, recording_date_time, species_code, latitude, longitude)%>%
+  summarize(songactivity=sum(individual_count))%>%
+  pivot_wider(names_from="species_code", values_from="songactivity")%>%
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  select("location", "recording_date_time", "latitude", "longitude", "SWTH")
+write.csv(songs_per_recording, file="output/SWTHsongs_per_recording.csv")
+
+indivs_per_recording<-ToD_T_W.birdsonly%>%
+  group_by(location, recording_date_time, species_code, latitude, longitude)%>%
+  summarize(indivs=max(individual_order))%>%
+  pivot_wider(names_from="species_code", values_from="indivs")%>%
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  select("location", "recording_date_time", "latitude", "longitude", "SWTH")
+write.csv(indivs_per_recording, file="output/SWTHindivs_per_recording.csv")
+```
+
+Let's create some time variables for each recording. 
+
+```{r dplyr-tidyr2, echo=TRUE, message=FALSE, warning=FALSE}
+library(lubridate)
+
+songs_per_recording$Hour<-format(as.POSIXct(songs_per_recording$recording_date_time), format = "%H")
+songs_per_recording$Minute<-format(as.POSIXct(songs_per_recording$recording_date_time), format = "%M")
+songs_per_recording$timeNumeric<-as.integer(songs_per_recording$Hour)+(as.integer(songs_per_recording$Minute)/60)
+
+songs_per_recording$JulianDay<-yday(songs_per_recording$recording_date_time)
+write.csv(songs_per_recording, file="output/SWTHsongs_per_recording.csv")
+
+indivs_per_recording$Hour<-format(as.POSIXct(indivs_per_recording$recording_date_time), format = "%H")
+indivs_per_recording$Minute<-format(as.POSIXct(indivs_per_recording$recording_date_time), format = "%M")
+indivs_per_recording$timeNumeric<-as.integer(indivs_per_recording$Hour)+(as.integer(indivs_per_recording$Minute)/60)
+
+indivs_per_recording$JulianDay<-yday(indivs_per_recording$recording_date_time)
+write.csv(indivs_per_recording, file="output/SWTHindivs_per_recording.csv")
+```
+
+
+**Histograms**
+
+```{r histogram, echo=TRUE, message=FALSE, warning=FALSE}
+hist(songs_per_recording$SWTH)
+print(paste0("Mean SWTH song activity per recording: ", mean(songs_per_recording$SWTH)))
+print(paste0("Variance in SWTH song activity per recording: ", var(songs_per_recording$SWTH)))
+
+hist(indivs_per_recording$SWTH)
+print(paste0("Mean SWTH individuals per recording: ", mean(indivs_per_recording$SWTH)))
+print(paste0("Variance in SWTH individuals per recording: ", var(indivs_per_recording$SWTH)))
+```
+
+Histogram suggests non-normal distributions of Swainson's Thrush song activity and number of individuals. Variance in these response variables is much larger than mean values, suggesting that we should model them with a negative binomial distribution.
+
+```{r histogram2, echo=TRUE, message=FALSE, warning=FALSE}
+nlevels(as.factor(songs_per_recording$latitude))#4
+levels(as.factor(songs_per_recording$latitude))
+#"53.789867" "59.411708" "59.417149" "60.03968"
+hist(songs_per_recording$latitude)
+hist(songs_per_recording$JulianDay)
+hist(songs_per_recording$timeNumeric)
+```
+
+**Box and Bar Plots**
+
+```{r boxplot, echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(songs_per_recording$SWTH)
+boxplot(SWTH~location,
+        data=songs_per_recording)
+```
+
+
+```{r barplot, echo=TRUE, message=FALSE, warning=FALSE}
+swth_summ<-songs_per_recording%>%
+  group_by(Hour)%>%
+  summarize(SWTH=mean(SWTH))
+barplot(swth_summ$SWTH,
+  xlab="Time of Day (24 h period)",
+  names.arg=levels(as.factor(songs_per_recording$Hour)),
+  ylab="Mean SWTH Song Activity",
+  border="red",
+  col="blue")
+```
+
+**Scatter Plots**
+
+```{r scatterplot-tod, echo=TRUE, message=FALSE, warning=FALSE}
+plot(songs_per_recording$Hour,
+     songs_per_recording$SWTH,
+     ylab="SWTH song rate",
+     xlab="Time of day (24 h period)", 
+     col="blue")
+```
+```{r scatterplot-julian, echo=TRUE, message=FALSE, warning=FALSE}
+plot(songs_per_recording$JulianDay,
+     songs_per_recording$SWTH,
+     ylab="SWTH song rate",
+     xlab="Time of day (24 h period)", 
+     col="blue")
+```
+
+```{r scatterplot-latitude, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording$latitude.F<-as.factor(ifelse(songs_per_recording$latitude<55,"S","N"))
+boxplot(SWTH~latitude.F,
+        data=songs_per_recording)
+```
+
+
+
+**Run a Simple Model**
+
+Data exploration suggested that Swainson's Thrush song activity varied as a quadratic function of Julian day.
+
+```{r simple-model, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording$JDAY<-(songs_per_recording$JulianDay-mean(songs_per_recording$JulianDay))/sd(songs_per_recording$JulianDay)
+songs_per_recording$JDAY2<-songs_per_recording$JDAY^2
+
+mod<-lm(SWTH~JDAY+JDAY2, data=songs_per_recording)
+summary(mod)
+
+#Get predicted values from linear regression
+preds<-predict(mod, songs_per_recording, se.fit = FALSE, scale = NULL, df = Inf,
+        interval = c("prediction"),
+        level = 0.95, type = c("response"))
+
+songs_per_recording.P<-cbind(songs_per_recording,preds)
+
+songs_per_recording.P<-songs_per_recording.P%>%
+  arrange(JulianDay)
+plot(songs_per_recording.P$JulianDay,
+     songs_per_recording.P$SWTH,
+     xlab="Julian day",
+     ylab="SWTH song activity")
+lines(songs_per_recording.P$JulianDay,
+     songs_per_recording.P$fit, col="darkred")
+
+```
+
+Regression results also suggested that Swainson's Thrush song activity varied as a quadratic function of Julian day, although a *bimodel distribution* is another possibility, and Julian day only explained a small amount of variance.
+
+How well does the data meet the statistical assumptions of regression?
+
+```{r simple-model-residual-plot, echo=TRUE, message=FALSE, warning=FALSE}
+res<-resid(mod)
+plot(fitted(mod), res)
+abline(0,0)
+```
+
+There is a lot of variance heterogeneity (bad!) since the *residuals* vary a lot more as the size of predicted values of song activity increase.
+
+```{r simple-model-QQ-plot, echo=TRUE, message=FALSE, warning=FALSE}
+qqnorm(res)#create a Q-Q plot for the residuals
+qqline(res)#add a straight diagonal line to the plot
+```
+
+Larger predicted values' residuals deviate from the Q-Q line (bad!).
+
+On top of that, we know that there are multiple observations per site and those will be correlated with other observations from the same site.
+
+We can try transforming the response variable to see if it improves the regression results but data independence will still be an issue.
+
+```{r simple-model2, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording$SWTH.sq<-sqrt(songs_per_recording$SWTH)
+songs_per_recording$SWTH.log<-log(songs_per_recording$SWTH+0.1)
+
+mod2<-lm(SWTH.sq~JDAY+JDAY2, data=songs_per_recording)
+summary(mod2)
+
+res2<-resid(mod2)
+plot(fitted(mod2), res2)
+abline(0,0)
+qqnorm(res2)
+qqline(res2)
+
+mod3<-lm(SWTH.log~JDAY+JDAY2, data=songs_per_recording)
+summary(mod3)
+
+res3<-resid(mod3)
+plot(fitted(mod3), res3)
+abline(0,0)
+qqnorm(res3)
+qqline(res3)
+```
+
+Square-root transforming or log-transforming the data does not improve the model output much. R-squared values are slightly higher after transformation but variance is still very heterogeneous.
+
+A *generalized linear model* that assumes a non-normal error distribution in song activity might fit better.
+
+```{r simple-model3, echo=TRUE, message=FALSE, warning=FALSE}
+mod4<-glm(SWTH~JDAY+JDAY2, data=songs_per_recording, family=quasipoisson(link = "log"))
+summary(mod4)
+
+res4<-resid(mod4)
+plot(fitted(mod4), res4)
+abline(0,0)
+
+pseudo.R2<-(mod4$null.deviance-mod4$deviance)/mod4$null.deviance
+```
+
+There is some variance heterogeneity still but less than with linear regression and the pseudo-R2 (proportion of explained deviance) `r pseudo.R2` is greater than the R2 explained by the regression.
+
+Data exploration suggests that Swainson's Thrush song activity varies as a more complex function of day and night. Use a more complex model like a generalized additive model or a circular function.
+
+*Also keep in mind*: all observations in these regression models are assumed to be independent but they come from four sites with multiple days in a row at a site. So mixed-effects models might be appropriate. 
+
+```{r simple-gam, echo=TRUE, message=FALSE, warning=FALSE}
+library(mgcv)
+library(gamm4)
+thetaval=(var(songs_per_recording$SWTH)/mean(songs_per_recording$SWTH))
+
+songs_per_recording$TIME<-(songs_per_recording$timeNumeric-mean(songs_per_recording$timeNumeric))/sd(songs_per_recording$timeNumeric)
+
+GAM1 <- gamm4(SWTH ~s(JDAY, k = 5, bs = "cs") + s(TIME, k = 5, bs = "cs"), random=~(1|location), data=songs_per_recording, family=negbin(theta=thetaval, link="log"))
+
+coef.gammB<-coef(GAM1$gam)
+#model.matrix(GAM1$gam)
+```
+
+A more complex GAM where the effects of time of day and time of season can vary with latitude.
+
+```{r simple-gam2, echo=TRUE, message=FALSE, warning=FALSE}
+GAM2 <- gamm4(SWTH ~latitude.F+ s(JDAY, k = 5, bs = "cs", by=latitude.F) + s(TIME, k = 7, bs = "cs", by=latitude.F), random=~(1|location), data=songs_per_recording, family=negbin(theta=thetaval, link="log"))
+
+coef.gammB2<-coef(GAM2$gam)
+#model.matrix(GAM2$gam)
+coef.gammB2
+```
+Compare model fits.
+
+```{r rel-model-fits, echo=TRUE, message=FALSE, warning=FALSE}
+AIC(GAM1$mer, GAM2$mer)
+
+
+```
+
+The second model has a lower AIC value and presumably a better relative fit, suggesting that 
+the effect of Julian day and / or of time of day/night varies between northern and southern Alberta.
+
+We can also check output from GAMs for potential data violations.
+
+
+```{r gam-checks, echo=TRUE, message=FALSE, warning=FALSE}
+print("GAM1 Check:")
+gam.check(GAM1$gam)
+
+print("GAM2 Check:")
+gam.check(GAM2$gam)
+
+```
+
+Create a prediction dataset for GAMs
+
+```{r pred-dataset, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$timeNumeric==5,]
+swth.tsss.jd<-expand.grid(intercept=1,
+                             latitude.F=c("N","S"), 
+                             TIME=-0.5254806, #scaled value associated with timeNumeric=5.00
+                             JDAY=as.numeric(levels(as.factor(JDAY)))
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+swth.tsss.jdmm <- model.matrix(GAM2$gam, swth.tsss.jd)
+
+## predict and apply inverse link function: this gives a new matrix
+swth.gam.pred <- (exp(swth.tsss.jdmm %*% coef.gammB2))#take antilog?
+Preds<-data.frame(swth.gam.pred)
+```
+
+Plot predicted relationship between Swainson's Thrush activity at 5 AM over the season in both northern and southern Alberta.
+
+```{r plot-gamm-preds, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(swth.tsss.jd, Preds)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+plotDataN.time5<-plotData%>%
+  filter(latitude.F=="N")
+plotDataN.time5$timeNumeric<-5.0
+plotDataN.time5$JulianDay<-JulianDay
+
+plot(plotDataN.time5$JulianDay, 
+     plotDataN.time5$swth.gam.pred,
+     xlab="Time of Season (Days Since Jan. 1)",
+     ylab="Predicted 5 am SWTH Song Rate",
+     main="Northern Alberta")
+
+
+plotDataS.time5<-plotData%>%
+  filter(latitude.F=="S")
+plotDataS.time5$timeNumeric<-5.0
+plotDataS.time5$JulianDay<-JulianDay
+
+plot(plotDataS.time5$JulianDay, 
+     plotDataS.time5$swth.gam.pred,
+     xlab="Time of Season (Days Since Jan. 1)",
+     ylab="Predicted 5am SWTH Song Rate",
+     main="Southern Alberta")
+
+```
+
+```{r pred-dataset2, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$JulianDay==180,]
+swth.tsss.jd2<-expand.grid(intercept=1,
+                             latitude.F=c("N","S"), 
+                             TIME=as.numeric(levels(as.factor(TIME))), 
+                             JDAY=0.5162948#scaled value associated with JulianDay=180
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+swth.tsss.jdmm2 <- model.matrix(GAM2$gam, swth.tsss.jd2)
+
+## predict and apply inverse link function: this gives a new matrix
+swth.gam.pred2 <- (exp(swth.tsss.jdmm2 %*% coef.gammB2))#take antilog?
+Preds2<-data.frame(swth.gam.pred2)
+```
+
+Plot predicted relationship between Swainson's Thrush activity over a 24-hour period (Julian Day = 180) in both northern and southern Alberta.
+
+```{r plot-gamm-preds2, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(swth.tsss.jd2, Preds2)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+plotDataN.time5<-plotData%>%
+  filter(latitude.F=="N")
+plotDataN.time5$timeNumeric<-timeNumeric
+plotDataN.time5$JulianDay<-180
+
+plot(plotDataN.time5$timeNumeric, 
+     plotDataN.time5$swth.gam.pred,
+     xlab="24-hour period",
+     ylab="Predicted SWTH Song Rate (JDAY 180)",
+     main="Northern Alberta")
+
+
+plotDataS.time5<-plotData%>%
+  filter(latitude.F=="S")
+plotDataS.time5$timeNumeric<-timeNumeric
+plotDataS.time5$JulianDay<-180
+
+plot(plotDataS.time5$timeNumeric, 
+     plotDataS.time5$swth.gam.pred,
+     xlab="24-hour period",
+     ylab="Predicted SWTH Song Rate (JDAY 180)",
+     main="Southern Alberta")
+
+```
+
+Predicted effects of time of day look discontinuous at extreme values (0 hrs and 23 hrs). A circular function might be better.
+
+```{r simple-gam3, echo=TRUE, message=FALSE, warning=FALSE}
+GAM3 <- gamm4(SWTH ~latitude.F+ s(JDAY, k=3, bs = "cs", by=latitude.F) + s(TIME, k=5, bs = "cc", by=latitude.F), random=~(1|location), data=songs_per_recording, family=negbin(theta=thetaval, link="log"))
+#cc=a cyclic cubic spline used for TIME
+#removed the specification for the number of knots; a larger number of knots is used for both the JDAY and TIME basis functions
+
+coef.gammB3<-coef(GAM3$gam)
+#model.matrix(GAM2$gam)
+coef.gammB3
+```
+
+```{r gam3-check, echo=TRUE, message=FALSE, warning=FALSE}
+print("AIC:")
+AIC(GAM1$mer, GAM2$mer, GAM3$mer)
+
+print("GAM3 Check:")
+gam.check(GAM3$gam)
+
+```
+```{r pred-dataset3, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$timeNumeric==5,]
+swth.tsss.jd<-expand.grid(intercept=1,
+                             latitude.F=c("N","S"), 
+                             TIME=-0.5254806, #scaled value associated with timeNumeric=5.00
+                             JDAY=as.numeric(levels(as.factor(JDAY)))
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+swth.tsss.jdmm <- model.matrix(GAM3$gam, swth.tsss.jd)
+
+## predict and apply inverse link function: this gives a new matrix
+swth.gam.pred <- (exp(swth.tsss.jdmm %*% coef.gammB3))#take antilog?
+Preds<-data.frame(swth.gam.pred)
+```
+
+Plot predicted relationship between Swainson's Thrush activity at 5 AM over the season in both northern and southern Alberta, using a circular function for the effect of time of day/night.
+
+```{r plot-gamm-preds3, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(swth.tsss.jd, Preds)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+plotDataN.time5<-plotData%>%
+  filter(latitude.F=="N")
+plotDataN.time5$timeNumeric<-5.0
+plotDataN.time5$JulianDay<-JulianDay
+
+plot(plotDataN.time5$JulianDay, 
+     plotDataN.time5$swth.gam.pred,
+     xlab="Time of Season (Days Since Jan. 1)",
+     ylab="Predicted 5 am SWTH Song Rate",
+     main="Northern Alberta")
+
+
+plotDataS.time5<-plotData%>%
+  filter(latitude.F=="S")
+plotDataS.time5$timeNumeric<-5.0
+plotDataS.time5$JulianDay<-JulianDay
+
+plot(plotDataS.time5$JulianDay, 
+     plotDataS.time5$swth.gam.pred,
+     xlab="Time of Season (Days Since Jan. 1)",
+     ylab="Predicted 5am SWTH Song Rate",
+     main="Southern Alberta")
+
+```
+
+Now plot the effect of time of day/night, using a circular function of time.
+
+```{r pred-dataset4, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$JulianDay==180,]
+swth.tsss.jd2<-expand.grid(intercept=1,
+                             latitude.F=c("N","S"), 
+                             TIME=as.numeric(levels(as.factor(TIME))), 
+                             JDAY=0.5162948#scaled value associated with JulianDay=180
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+swth.tsss.jdmm2 <- model.matrix(GAM3$gam, swth.tsss.jd2)
+
+## predict and apply inverse link function: this gives a new matrix
+swth.gam.pred2 <- (exp(swth.tsss.jdmm2 %*% coef.gammB3))#take antilog?
+Preds2<-data.frame(swth.gam.pred2)
+```
+
+Plot predicted relationship between Swainson's Thrush activity over a 24-hour period (Julian Day = 180) in both northern and southern Alberta, using a circular function for the effect of time.
+
+```{r plot-gamm-preds4, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(swth.tsss.jd2, Preds2)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+plotDataN.time5<-plotData%>%
+  filter(latitude.F=="N")
+plotDataN.time5$timeNumeric<-timeNumeric
+plotDataN.time5$JulianDay<-180
+
+plot(plotDataN.time5$timeNumeric, 
+     plotDataN.time5$swth.gam.pred,
+     xlab="24-hour period",
+     ylab="Predicted SWTH Song Rate (JDAY 180)",
+     main="Northern Alberta")
+
+
+plotDataS.time5<-plotData%>%
+  filter(latitude.F=="S")
+plotDataS.time5$timeNumeric<-timeNumeric
+plotDataS.time5$JulianDay<-180
+
+plot(plotDataS.time5$timeNumeric, 
+     plotDataS.time5$swth.gam.pred,
+     xlab="24-hour period",
+     ylab="Predicted SWTH Song Rate (JDAY 180)",
+     main="Southern Alberta")
+
+```
+
+Predicted effects
+
+Try bootstrap. Note that the code chunk below has been set to *eval=FALSE*, so that it isn't executed when the Markdown document is knitted.
+
+```{r bs-functions, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+table(songs_per_recording$location)#4 sites with 197 - 418 recordings per site
+
+fSampleNint <- function(dat) {
+  dat %>%
+    group_by(location)%>% 
+    sample_n(40, replace=TRUE)
+}#creates a sample of 100 observations from the dataset
+d1<-fSampleNint(songs_per_recording)
+d2<-fSampleNint(songs_per_recording)
+d3<-fSampleNint(songs_per_recording)
+
+bs <- function(data, indices){#
+  d<-fSampleNint(data)#, PKEY, 1
+  #return(d$PKEY)
+  thetaval<-var(d$SWTH)/mean(d$SWTH)
+  try(GAM3 <- gamm4(SWTH ~latitude.F+ s(JDAY, bs = "cs", k=3, by=latitude.F) + s(TIME, k=5, bs = "cc", by=latitude.F), random=~(1|location), data=d, family=negbin(theta=thetaval, link="log")))
+  try(coef.gamm<-coef(GAM3$gam))
+  try(return(coef.gamm))
+}
+#specifying k=3 for a quadratic function (single peak) and k=5-6 for two peaks that don't necessary fall at extreme values of a predictor.
+library(boot)
+a<-Sys.time()
+songresults <- boot(data=songs_per_recording,
+                    statistic=bs, parallel="multicore",
+                    R=100)
+b<-Sys.time()
+print(b-a)
+
+CoefB <-t(songresults$t)
+#get rid of columns with errors
+CoefB<-data.frame(CoefB)
+CoefB[] <- lapply(CoefB, function(x) as.numeric(as.character(x)))
+#delete columns with NA values
+all_na <- function(x) any(!is.na(x))
+CoefB<-CoefB %>% select_if(all_na)
+CoefB<-as.matrix(CoefB)
+ncol(CoefB)
+CoefBCI50 <- t(apply(CoefB, 1, quantile, c(0.5, 0.25, 0.75), na.rm=TRUE))
+CoefBCI90 <- t(apply(CoefB, 1, quantile, c(0.5, 0.05, 0.95), na.rm=TRUE))
+save(songresults, CoefB, CoefBCI50, CoefBCI90, file="output/boot100_SWTH_Aug4_3k_Julian_5k_Time.RData")
+
+```
+
+Plot bootstrapped model results, producing a matrix plot of song activity versus time of day/night for each combination of latitude and Julian date. Note that the code chunk below has been set to *eval=FALSE*, so that it isn't executed when the Markdown document is knitted.
+
+```{r bs-predictions, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+load("output/boot100_SWTH_Aug4_3k_Julian_5k_Time.RData")
+songs_per_recording$date<-substr(songs_per_recording$recording_date_time,1,10)
+dates<-data.frame(unique(songs_per_recording[,c("date","JulianDay","JDAY")]))
+date_times<-data.frame(unique(songs_per_recording[,c("date","JulianDay","JDAY","timeNumeric","TIME")]))
+
+for (i in 1:nrow(dates)){
+  Day<-dates[i,1]
+  ordinal.day<-dates[i,2]
+  songs.tsss.jd<-expand.grid(intercept=1,
+                             latitude.F=c("N","S"), 
+                             timeNumeric=seq(from=0,to=23.66667,by=(1/3)),
+                             JulianDay=seq(from=113,to=240,by=1)
+  )
+  songs.tsss.jd$JDAY<-(songs.tsss.jd$JulianDay-mean(songs.tsss.jd$JulianDay))/sd(songs.tsss.jd$JulianDay)   
+  songs.tsss.jd$TIME<-(songs.tsss.jd$timeNumeric-mean(songs.tsss.jd$timeNumeric))/sd(songs.tsss.jd$timeNumeric)
+
+  #Now limit predictions to those from a single date
+  songs.tsss.jd<-songs.tsss.jd[songs.tsss.jd$JulianDay==ordinal.day,]
+  
+  JulianDay<-songs.tsss.jd$JulianDay
+  Latitude<-songs.tsss.jd$latitude.F
+  timeNumeric<-songs.tsss.jd$timeNumeric
+  str(songs.tsss.jd)
+  names(songs.tsss.jd)
+  
+  songs.tsss.jdmm <- model.matrix(GAM3$gam, songs.tsss.jd)#meantemp.s+moon.s+
+  
+  ## predict and apply inverse link function: this gives an n_new x B+1 matrix
+  songpreds100 <- (exp(songs.tsss.jdmm %*% CoefB))#take antilog?
+  
+  ## calculate median and 95% CIs for predictions
+  bp100.CI95 <- t(apply(songpreds100, 1, quantile, seq(from=0.025, to=0.975, by=((0.975-0.025)/95)), na.rm=TRUE))
+  
+  ## Use these bootstrapped predictions to generate heat maps, 3d plots, etc.
+  
+  songs.tsss.jd.bci<-cbind(songs.tsss.jd, bp100.CI95)
+  songs.tsss.jd.bci$Latitude.F<-as.factor(songs.tsss.jd.bci$latitude.F)
+  songs.tsss.jd.bci$date<-Day
+
+  latlevels<-c("N","S")
+  try(for (j in 1:length(latlevels)){
+    preds.sitelevel<-songs.tsss.jd.bci[songs.tsss.jd.bci$Latitude.F==latlevels[j],]
+    preds.025.975<-preds.sitelevel[,7:102]
+    for (k in 1:ncol(preds.025.975)){
+      preds.025.975[,k]<-ifelse(preds.025.975[,k]>20,20,preds.025.975[,k])#pick a threshold value that is reasonable for a 1-minute recording, e.g. a song every 3 seconds
+    }
+    tiff(paste0("output/matrix plots/SWTH 3k Julian 5k Time/",ifelse(j==1,"N_","S_"),"SWTHsongrateXToD-",Day,".tiff"), units="in", width=6, height=4, res=300)
+    matplot(preds.sitelevel$timeNumeric, 
+            preds.025.975, 
+            type="l", cex.axis=1.5, cex.lab=1.5,
+            col="red",#cividis(100),
+            xlab=paste0("Time of day (24h) ", Day),
+            xlim=c(0,23.99), ylim=c(0,20),
+            ylab="SWTH song rate",
+            main=paste0(ifelse(j==1,"North ","South "), "Alberta"))   
+    dev.off()
+  })
+}
+
+```

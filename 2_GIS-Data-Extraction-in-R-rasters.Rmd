@@ -1,0 +1,299 @@
+---
+title: "Lesson 3. GIS Data Extraction in R: Raster Data"
+author: "L Leston"
+date: "2023-07-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Introduction**
+
+Shapefiles or *vector data* define spatial objects as points, lines made of connected line segments, or polygons made of line segments in which the "first" and "last" line segments connect to each other. Points, lines, and polygons are described by the coordinates of individual points and how these points are connected to each other. Shapefiles are usually created manually by technicians via *digitization*, in which technicians draw points and line segments of features based on the edges or locations of features in underlying aerial maps. Individual points, lines, and polygons are *features* within shapefiles that can have multiple *attributes* (aspatial data or values of variables associated with a particular shapefile feature). 
+
+Spatial objects defined by *raster data* exist as layers or grids of cells, which are often but not necessarily square or rectangular cells. There may be multiple attributes at the location of a particular grid cell, but each attribute is stored in a separate raster layer. Raster layers can be *stacked* so that while there is only one attribute per raster layer, there can be multiple attributes per *raster stack* or *raster brick*.
+
+Each kind of spatial data, shapefiles and raster layers, has advantages and disadvantages for users. In general, shapefile data describes the Earth's surface in greater detail than raster data, at least until recently. Some kinds of habitat features of interest to wildlife studies are mostly only available within shapefile data such as provincial vegetation inventories or forest resource inventories, where people have ground-truthed the vegetation data for at least some of those features. Features within shapefiles may also be classified by experts consulting aerial photos. One disadvantage of shapefiles are that shapes, boundaries, and attribute values for features can be incorrect due to faulty digitization and interpretation. Another disadvantage of shapefiles is that since ground-truthing, digitization and interpretation of fine-scale features is time-consuming, shapefiles are usually not updated often and very extensive shapefiles (e.g., provincial scale forest resource inventories) are frequently out of date or inconsistently updated.
+
+Until recent years, fine-scale raster data of the Earth's surface was limited and what data was available still needed to be interpreted to be meaningful to wildlife studies. Some useful raster layers are hybrid layers (e.g., Beaudoin forest layers for 2001 and 2011), where data from one source (e.g., land cover categories from 250-m MODIS satellite data) were combined with ground-truthed vegetation data at particular locations (e.g. forest structure and composition from Permanent Sample Plots in Canada's forested areas), then extrapolated to areas outside of the ground-truthed locations. Interpreted layers like these are still pretty coarse resolution compared to shapefile vegetation inventories and are not frequently updated, although there is a growing number of yearly interpreted layers at 30-m or even 10-m resolution. 
+
+There is a growing amount of remotely-sensed raster data of Earth's surface available from drones and satellites orbiting the Earth. Newer satellites are able to obtain pictures and raster data of Earth's surface at increasingly finer spatial scales (*increasing spatial resolution*), a greater variety of wavelengths of reflected light (*increasing spectral resolution*), and more frequently over time (*increasing temporal resolution*). What this means is that scientists 1) have more up-to-date information about the Earth's surface at locations where we want to extract data to wildlife survey points; and 2) are better able to distinguish different types of information (e.g., habitat or human footprint categories) at those locations. But more data at finer scales means greater computer memory and power and time requirements for storing and processing that data. And more data is only as good if that data is accurate.
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate examples of spatial data extraction from raster layers and processing of that data in R. Basically, turn R into an open-source geographic information system (GIS). This lesson will demonstrate a *moving window analysis*, the difference between a *hard* versus a *soft* buffer (i.e., Gaussian filtering), and calculation of habitat fragmentation metrics. *Note*: as much as possible, this script will use the newer **terra** and **exactextractr** packages for raster-based analyses rather than the older **raster** package, because the raster package is no longer being updated and may become incompatible with future versions of R packages that are continuing to be updated. In a subsequent lesson, the **landscapemetrics** package will be used with rasterized landscapes around each point count to obtain metrics of habitat fragmentation used in landscape ecology studies.
+
+**Learning Outcomes**
+
+The student will be able import a raster stack or individual raster layers into R.
+
+The student will be able to select individual raster layers within a raster stack and save them as R objects and as raster layers outside of R.
+
+The student will be able to plot rasters in R.
+
+The student will be able to create buffers around shapefile points and use those buffers to extract and summarize raster data within *X* m of each point.
+
+The student will perform a *moving window analysis* on a raster based on a *soft* buffer (*Gaussian filtering*), then extract and summarize that data within *X* m of each point.
+
+
+
+**Wild Trax data set: BU_Edge_Communities_2021-2022**
+
+The BU Edge Communities 2021-2022 data set consists of recordings from ARU stations set up along short transects starting at different kinds of manmade edges in Alberta’s boreal forests. These edges are associated with either harvest of trees for timber or pulpwood or different types oil and gas footprint (seismic lines, pipelines, roads, well sites).
+
+We will extract forest structure and composition data from an existing raster stack. Each layer in the raster stack comes from the 2011 Beaudoin national forest layers for Canada. There are 93 forest structure and composition variables in this raster stack.
+
+
+```{r get-raster-stack, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(sf)
+library(tidyverse)
+library(ggspatial)
+library(raster)
+library(maptools)
+library(rgdal)
+library(sp)
+library(terra)
+library(exactextractr)
+library(spatialEco)
+
+#Get habitat and footprint data at this stage (change raster::brick to terra::rast)
+#Methods to create a SpatRaster. These objects can be created from scratch, from a 
+#filename, or from another object.
+#A SpatRaster represents a spatially referenced surface divided into three 
+#dimensional cells (rows, columns, and layers).
+#When a SpatRaster is created from a file, it does not load the cell (pixel) 
+#values into memory (RAM). It only reads the parameters that describe the geometry 
+#of the SpatRaster, such as the number of rows and columns and the coordinate 
+#reference system. The actual values will be read when needed.
+a<-Sys.time()
+pred_abs_2011.local<-rast("vegetation/abs2011_250m.grd")
+b<-Sys.time()
+print(b-a)
+pred_abs_2011.local
+names(pred_abs_2011.local)
+
+volume<-pred_abs_2011.local[["Structure_Volume_Total_v1"]]
+#terra::writeRaster(volume, "vegetation/volume.tif", overwrite=TRUE)
+
+livebiomass<-pred_abs_2011.local[["Structure_Biomass_TotalLiveAboveGround_v1"]]
+#terra::writeRaster(livebiomass, "vegetation/biomass.tif", overwrite=TRUE)
+
+age<-pred_abs_2011.local[["Structure_Stand_Age_v1"]]
+#terra::writeRaster(age, "vegetation/age.tif", overwrite=TRUE)
+
+height<-pred_abs_2011.local[["Structure_Stand_Height_v1"]]
+#terra::writeRaster(height, "vegetation/height.tif", overwrite=TRUE)
+
+decid<-pred_abs_2011.local[["SpeciesGroups_Broadleaf_Spp_v1"]]
+#terra::writeRaster(decid, "vegetation/decid.tif", overwrite=TRUE)
+
+```
+Plot rasters to see what they look like.
+
+
+```{r plot-decid, echo=TRUE, message=FALSE, warning=FALSE}
+plot(decid)
+
+```
+
+Import the individual raster layers we created.
+
+```{r get-indiv-rasters, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+#Get habitat and footprint data at this stage (change raster::brick to terra::rast)
+#Methods to create a SpatRaster. These objects can be created from scratch, from a 
+#filename, or from another object.
+#A SpatRaster represents a spatially referenced surface divided into three 
+#dimensional cells (rows, columns, and layers).
+#When a SpatRaster is created from a file, it does not load the cell (pixel) 
+#values into memory (RAM). It only reads the parameters that describe the geometry 
+#of the SpatRaster, such as the number of rows and columns and the coordinate 
+#reference system. The actual values will be read when needed.
+Decid<-rast("vegetation/decid.tif")
+Decid
+
+Volume<-rast("vegetation/volume.tif")
+Volume
+
+Biomass<-rast("vegetation/biomass.tif")
+Biomass
+
+Age<-rast("vegetation/age.tif")
+Age#in 2011
+
+Height<-rast("vegetation/height.tif")
+Height
+```
+
+
+We can see that the spatial resolution of these rasters is 250 m and the coordinate reference system is Lambert Conformal Conic. 
+
+Now we'll read in the edge community point count data, create a shapefile from the coordinates, and reproject the shapefile to be in the same coordinate system as the vegetation data.
+
+```{r get-points, echo=TRUE, message=FALSE, warning=FALSE}
+#Get point count site and year
+a<-Sys.time()
+buEdges<-read.csv("point counts/BU_Edge_Communities_2021-2022_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+buEdges$Year<-substr(buEdges$recording_date_time,1,4)#extracts year
+buEdges.SSYR<-unique(buEdges[,c("location","Year","project_id","latitude","longitude")])
+#get rid of any points lacking coordinates
+buEdges.SSYR<-buEdges.SSYR%>%
+  filter(!is.na(latitude))%>%
+  filter(!is.na(longitude))
+#buEdges.SSYR<-buEdges.SSYR[!is.na(latitude),]   #in base R
+#buEdges.SSYR<-buEdges.SSYR[!is.na(longitude),]  #in base R
+
+ssyr.sf <- st_as_sf(x = buEdges.SSYR,                         
+               coords = c("longitude", "latitude"),
+               crs = "+init=epsg:4326 +proj=longlat +ellps=WGS84 
++datum=WGS84 +no_defs +towgs84=0,0,0")
+
+ssyr.sf<-st_transform(ssyr.sf, "+proj=lcc +lat_0=0 +lon_0=-95 +lat_1=49 +lat_2=77 +x_0=0 +y_0=0 +datum=NAD83 +units=m +no_defs") #transform the points to same coordinate system as the forest data (in meters), so that we can use buffers and extract data from the rasters
+b<-Sys.time()
+print(b-a)
+
+ssyr.sf
+```
+
+Now create some buffers that we can use for extracting raster data at one or more spatial scales. For now, we'll use a buffer of 150 m for local-scale vegetation and 565 m to extract vegetation within a 1-square-kilometer area around each point count station.
+
+```{r get-point-count-buffers, echo=TRUE, message=FALSE, warning=FALSE}
+ssyr.sf.b150<-ssyr.sf %>% st_buffer(150)
+ssyr.sf.b565<-ssyr.sf %>% st_buffer(565)
+
+a<-Sys.time()
+extract_2011.b150_pointpoly <- terra::extract(pred_abs_2011.local, vect(ssyr.sf.b150), fun=mean)
+colnames(extract_2011.b150_pointpoly) <- paste0(colnames(extract_2011.b150_pointpoly), ".150m")
+b<-Sys.time()
+print(paste0(print(b-a)," to extract and summarize forest data within 150 m of points."))
+
+c<-Sys.time()
+extract_2011.b565_pointpoly <- terra::extract(pred_abs_2011.local, vect(ssyr.sf.b565), fun=mean)
+colnames(extract_2011.b565_pointpoly) <- paste0(colnames(extract_2011.b565_pointpoly), ".565m")
+d<-Sys.time()
+print(paste0(print(d-c)," to extract and summarize forest data within 565 m of points."))
+
+
+#join the extracted data for each point to the points shapefile
+e<-Sys.time()
+ssyr.sf.vars<-cbind(ssyr.sf, extract_2011.b150_pointpoly[,-1], extract_2011.b565_pointpoly[,-1])
+f<-Sys.time()
+print(paste0(print(f-e)," to join extracted, summarized forest data to points shapefile."))
+
+names(ssyr.sf.vars)
+
+```
+
+The terra::extract() function is relatively fast compared to its raster::extract() predecessor. Now convert the sf object (point shapefile) to a data frame and save the extracted data.
+
+
+```{r save-hard-buffered-data-extracted, echo=TRUE, message=FALSE, warning=FALSE}
+#Shorten column names in shapefile
+new_names <- c("Species_" = "",
+               "SpeciesGroups_" = "",
+               "Structure_" = "", 
+               "LandCover_" = "",
+               "_v1" = "",
+               ".150" = "_150",
+               ".565" = "_565",
+               "location" = "loc")
+data2 = ssyr.sf.vars %>%
+  set_names(~str_replace_all(.x,new_names))
+#Names must be shortened a lot (<10 characters) to be saved as a shapefile. Maybe just save as an RData file.
+save(ssyr.sf.vars, file="output/buEdges_ForestData2011.hardbuffer.RData")
+#simple features object saved inside an RData file
+
+#st_write(data2[,1], "output/buEdges_ForestData2011.hardbuffer.shp", append=FALSE)
+
+#data to a CSV file: keep XY coordinates
+st_write(ssyr.sf.vars, "output/buEdges_ForestData2011.hardbuffer.csv", layer_options="GEOMETRY=AS_XY", append=FALSE)
+
+#just the data to a CSV: no XY coordinates
+ssyr.df.vars.noXY<-st_drop_geometry(ssyr.sf.vars)
+
+write.csv(ssyr.df.vars.noXY, file="output/buEdges_ForestData2011.hardbuffer.csv")
+```
+
+Plot data values at these points.
+
+```{r plot-hard-buffered-data-extracted, echo=TRUE, message=FALSE, warning=FALSE}
+plot(ssyr.sf.vars["LandCover_VegTreed_v1.150m"])
+```
+
+
+There are 186 variables (93 at two different spatial scales) for each point. The type of buffer we used to extract data in this case was a *hard* buffer. Just as a shapefile buffer *clips* environmental data from a larger shapefile within a certain distance of survey points and then only summarizes the clipped data within that buffer distance, a hard buffer only uses the raster data within the buffer distance of each point count. Raster data outside the buffer carries zero weight on the results and all raster cells that fall inside the hard buffer carry equal weight, whether those raster cells are on the buffer edge or right next to the survey point of interest.
+
+We might consider using a *soft* buffer instead, that weights the influence of raster cells based on their distance from each survey point. More distant raster cells still have lower though not necessarily zero weight, while closer raster cells carry more weight. Instead of a buffer distance beyond which the influence of raster cells drops to zero, we specify a value of *sigma* at which spatial weight drops steeply, but according to a normal or *Gaussian* curve as a function of distance. We call this method of summarizing data at larger spatial scales *Gaussian filtering*. Gaussian filtering is a type of moving window analysis applied to the original local-scale raster to create a new raster in which 1) the new cell values are the original raster's values summarized at a larger spatial scale; and 2) closer neighboring cells in the original raster have more influence on the summarized values in each cell in the new raster than more distant cells in the original raster. The values in each cell of the new raster are then extracted to the points in the shapefile.
+
+```{r Gaussian-filtering-or-soft-buffer, echo=TRUE, message=FALSE, warning=FALSE}
+# Gaussian filter for square cells
+a<-Sys.time()
+g1<-spatialEco::raster.gaussian.smooth(raster(pred_abs_2011.local$LandCover_NonVeg_v1), s=3, n=11, type="mean")
+plot(pred_abs_2011.local$LandCover_NonVeg_v1)
+plot(g1)
+#Arguments
+#x = 	A terra SpatRaster raster object
+#s = Standard deviation (sigma) of kernel (default is 2)
+#n = Size of the focal matrix, single value (default is 5 for 5x5 window), must be uneven number
+#scale (FALSE/TRUE) = Scale sigma to the resolution of the raster type	
+#Type = statistic to use in the smoothing operator; "mean", "median", "sd", "convolution"
+
+g2<-spatialEco::raster.gaussian.smooth(raster(pred_abs_2011.local$LandCover_NonVeg_v1), s=5, n=11, type="mean")
+
+plot(g2)
+b<-Sys.time()
+print(b-a)
+
+
+c<-Sys.time()
+ssyr.sf.Gaussianvars<-ssyr.sf
+extract_2011.s3n11 <- terra::extract(g1, ssyr.sf.Gaussianvars)
+ssyr.sf.Gaussianvars$LandCover_NonVeg.sig3n11<-extract_2011.s3n11  
+extract_2011.s5n11 <- terra::extract(g2, ssyr.sf.Gaussianvars)
+ssyr.sf.Gaussianvars$LandCover_NonVeg.sig5n11<-extract_2011.s5n11  
+d<-Sys.time()
+print(d-c)
+
+head(ssyr.sf.Gaussianvars)
+
+```
+
+Now try looping through the layers:
+
+```{r Gaussian-filtering-loop, echo=TRUE, message=FALSE, warning=FALSE}
+# Gaussian filter for square cells
+listOfNames<-c("Species_Popu_Tre_v1",
+               "Species_Popu_Bal_v1",
+               "Species_Pinu_Ban_v1",
+               "Species_Pice_Gla_v1",
+               "Species_Pice_Mar_v1",
+               "Species_Lari_Lar_v1")
+#variables or raster layers in pred_abs_2011.local
+a<-Sys.time()
+extract_2011.s3n11 <-list()#empty list
+for (i in listOfNames) {
+  g1<-spatialEco::raster.gaussian.smooth(raster(pred_abs_2011.local[[i]]), s=2, n=5, type="mean")
+  extract_2011.s3n11[[i]] <- terra::extract(g1, ssyr.sf)
+  #names(extract_2011.s3n11)<-paste0(i,".S3N11")
+  print(paste0(i, " filtered and extracted."))
+}
+b<-Sys.time()
+print(paste0(print(b-a), " to extract 6 variables via Gaussian filtering."))
+extracted<-do.call(cbind, extract_2011.s3n11)
+str(extracted)
+colnames(extracted)<-paste0(listOfNames,".S3N11")
+extracted<-data.frame(extracted)
+
+ssyr.sf.Gaussianvars<-cbind(ssyr.sf, extracted)
+
+ssyr.df.Gaussianvars<-st_drop_geometry(ssyr.sf.Gaussianvars)
+ 
+head(ssyr.df.Gaussianvars)
+write.csv(ssyr.df.Gaussianvars, file="output/buEdges_ForestData2011.softbufferS3N11.csv")
+
+```
+

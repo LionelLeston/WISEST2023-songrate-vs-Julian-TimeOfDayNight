@@ -1,0 +1,205 @@
+---
+title: "Lesson 6. Data Exploration and Plotting in R - Your Own Data"
+author: "L Leston"
+date: "2023-07-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate examples of exploring and plotting potential relationships in data in R, using the student's own data. We will show examples of using base R and the *tidyverse* packages like *tidyr*, *dplyr*, and *ggplot* to plot data, and start introducing very simple models.
+
+**Learning Outcomes**
+
+The student will be able to manipulate data frames to get data ready for plotting.
+
+The student will explore how data within a single variable is distributed (*histogram*).
+
+The student will be able to generate box plots to compare values of a variable within two or more categorical groups (*box, bar plots*).
+
+The student will be able to generate plots showing how one numeric variable's values change with the values of another numeric variable (*scatter plot*).
+
+The student will be able to run a simple *model* describing a theoretical relationship between two or more variables. Model examples include a *t-test*, a *regression*, an *analysis of variance (ANOVA)*, and a *generalized linear model*.
+
+The student will merge predictor data (*independent or explanatory* variables for each site) to bird count data to test for a relationship between bird abundance (the *dependent variable*) and an *independent variable*.
+
+**Wild Trax data set: Time_Of_Day_-_Tennessee_Warbler_(TEWA)_and_White_Throated_Sparrow_(WTSP)**
+
+These are recordings extracted from stations within the BU Edge Communities 2021-2022 data set, consisting of stations set up along short transects starting at different kinds of manmade edges in Alberta's boreal forests. These edges are associated with either harvest of trees for timber or pulpwood or different types oil and gas footprint (seismic lines, pipelines, roads, well sites). A relatively small number of stations are used but recordings from across a 24-hour cycle are transcribed for each of these stations. The intent is to look at how detections of a couple species (TEWA, WTSP) change over a 24-hour cycle and ideally how the relationship between time of day and song activity varies with latitude.
+
+The data we are looking at consist of detections of TEWA and WTSP per recording at each ARU station. There is one recording per hour within a 24-hour period at each station on a particular date, with one or more individuals per species detected per recording. *Note*: not all of the recordings have been transcribed yet, so there are some recordings with "NONE" as the species detected.
+
+
+**Reading Data into R**
+
+Now we will read in the data using a *function* in R called **read.csv()**:
+
+```{r read-in-csv, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+#library(ggplot2)
+ToD_T_W<-read.csv("point counts/BU_Time_Of_Day_-_Tennessee_Warbler_(TEWA)_and_White_Throated_Sparrow_(WTSP)_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+```
+
+R has taken a spreadsheet or table stored in a CSV file and saved it as an object in R called a *data frame*. The data frame stores the data we imported in a similar manner to a spreadsheet or table: observations as rows, variables or data types as columns. We will now examine the contents of the data frame *ToD_T_W* that we have created.
+
+```{r look-at-data-frame, echo=TRUE, message=FALSE, warning=FALSE}
+str(ToD_T_W)
+```
+
+Let's get rid of the recordings which have not yet been transcribed. 
+
+```{r look-at-data-frame2, echo=TRUE, message=FALSE, warning=FALSE}
+nrow(ToD_T_W[ToD_T_W$species_code=="NONE",])#679
+nrow(ToD_T_W[!ToD_T_W$species_code=="NONE",])#6618
+
+nrow(ToD_T_W[ToD_T_W$observer_user_id==-1,])#0
+nrow(ToD_T_W[!ToD_T_W$observer_user_id==-1,])#7297
+
+levels(as.factor(ToD_T_W$aru_task_status))
+nrow(ToD_T_W[ToD_T_W$aru_task_status=="Transcribed",])#6860
+nrow(ToD_T_W[!ToD_T_W$aru_task_status=="Transcribed",])#437
+
+
+ToD_T_WTrans<-ToD_T_W%>%filter(aru_task_status=="Transcribed")
+```
+
+Our observations will be individual recordings. Each observation will have a count for each possible species in the dataset. We start by taking the variable *individual_count*, which is a character string, and converting it to a number variable.
+
+```{r species-per-recording, echo=TRUE, message=FALSE, warning=FALSE}
+ToD_T_W.birdsonly<-ToD_T_WTrans
+ToD_T_W.birdsonly$individual_count<-ifelse(ToD_T_W.birdsonly$individual_count %in% c("CI 1","CI 2","CI 3","TMTT"), "0", ToD_T_W.birdsonly$individual_count)
+
+ToD_T_W.birdsonly$individual_count<-ifelse(ToD_T_W.birdsonly$species_common_name == "NONE", "0", ToD_T_W.birdsonly$individual_count)
+
+levels(as.factor(ToD_T_W.birdsonly$individual_count))
+ToD_T_W.birdsonly$individual_count<-as.integer(ToD_T_W.birdsonly$individual_count)
+
+#Alternatively, you could do this
+ToD_T_W.birdsonly<-ToD_T_WTrans%>%
+  mutate(individual_count = case_when(individual_count=="1" ~ 1,
+                                individual_count=="2" ~ 2,
+                                individual_count=="3" ~ 3,
+                                individual_count=="4" ~ 4,
+                                individual_count=="8" ~ 8,
+                                species_code=="NONE" ~ 0,
+                                individual_count=="0" ~ 0,
+                                individual_count=="CI 1" ~ 0,
+                                individual_count=="CI 2"~ 0,
+                                individual_count=="CI 3"~ 0,
+                                individual_count=="TMTT"~ 0))
+
+```
+
+Okay, now we have assigned proper number values to every observation in the variable *individual_count*, saved in the new data frame we created called *ToD_T_W.birdsonly*. 
+
+**Manipulating data using *tidyverse* functions**
+
+Summarize individual counts of each species at each site in each recording using *dplyr* and *tidyr* while keeping everything on a single 2-d data frame.
+
+```{r dplyr-tidyr, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording<-ToD_T_W.birdsonly%>%
+  group_by(location, recording_date_time, species_code, latitude, longitude)%>%
+  summarize(songactivity=sum(individual_count))%>%
+  pivot_wider(names_from="species_code", values_from="songactivity")%>%
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  select("location", "recording_date_time", "latitude", "longitude", "TEWA", "WTSP")
+write.csv(songs_per_recording, file="output/songs_per_recording.csv")
+
+indivs_per_recording<-ToD_T_W.birdsonly%>%
+  group_by(location, recording_date_time, species_code, latitude, longitude)%>%
+  summarize(indivs=max(individual_order))%>%
+  pivot_wider(names_from="species_code", values_from="indivs")%>%
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  select("location", "recording_date_time", "latitude", "longitude", "TEWA", "WTSP")
+write.csv(indivs_per_recording, file="output/indivs_per_recording.csv")
+```
+
+Let's create a categorical variable for the kind of site. Some of the points are along edges and some are within forests away from edges. The edges include harvest, road, seismic line, pipeline, and wellsite, and some miscellaneous points that we will drop. 
+
+```{r dplyr-tidyr2, echo=TRUE, message=FALSE, warning=FALSE}
+library(lubridate)
+
+songs_per_recording$Hour<-format(as.POSIXct(songs_per_recording$recording_date_time), format = "%H")
+songs_per_recording$Minute<-format(as.POSIXct(songs_per_recording$recording_date_time), format = "%M")
+songs_per_recording$timeNumeric<-as.integer(songs_per_recording$Hour)+(as.integer(songs_per_recording$Minute)/60)
+
+songs_per_recording$JulianDay<-yday(songs_per_recording$recording_date_time)
+```
+
+
+**Histograms**
+
+```{r histogram, echo=TRUE, message=FALSE, warning=FALSE}
+hist(songs_per_recording$WTSP)
+hist(songs_per_recording$TEWA)
+```
+
+```{r histogram2, echo=TRUE, message=FALSE, warning=FALSE}
+range(songs_per_recording$TEWA)
+hist(songs_per_recording$TEWA, breaks=seq(0,26,by=1))
+hist(songs_per_recording$TEWA, breaks=seq(0,26,by=2))
+```
+
+**Box and Bar Plots**
+
+```{r boxplot, echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(songs_per_recording$TEWA)
+boxplot(TEWA~location,
+        data=songs_per_recording)
+```
+
+
+```{r barplot, echo=TRUE, message=FALSE, warning=FALSE}
+tewa_summ<-songs_per_recording%>%
+  group_by(Hour)%>%
+  summarize(TEWA=mean(TEWA))
+barplot(tewa_summ$TEWA,
+  xlab="Time of Day (24 h period)",
+  names.arg=seq(from=0, to=23, by=1),
+  ylab="Mean TEWA Song Activity",
+  border="red",
+  col="blue")
+```
+
+**Scatter Plots**
+
+```{r scatterplot, echo=TRUE, message=FALSE, warning=FALSE}
+plot(songs_per_recording$Hour,
+     songs_per_recording$TEWA,
+     ylab="TEWA song rate",
+     xlab="Time of day (24 h period)", 
+     col="blue")
+```
+
+
+**Run a Simple Model**
+
+```{r simple-model, echo=TRUE, message=FALSE, warning=FALSE}
+mod<-lm(TEWA~timeNumeric, data=songs_per_recording)
+summary(mod)
+```
+
+```{r simple-model-2, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording$timesq<-(songs_per_recording$timeNumeric-mean(songs_per_recording$timeNumeric))^2
+mod2<-lm(TEWA~timeNumeric+timesq, data=songs_per_recording)
+summary(mod2)
+```
+
+```{r join-data, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording$TEWAnum<-indivs_per_recording$TEWA
+songs_per_recording$WTSPnum<-indivs_per_recording$WTSP
+```
+
+```{r simple-model-3, echo=TRUE, message=FALSE, warning=FALSE}
+mod3<-lm(TEWA~timeNumeric+timesq+TEWAnum, data=songs_per_recording)
+summary(mod3)
+```
+Things to think about: all observations in these regression models are assumed to be independent but they come from four sites with multiple days in a row at a site. So mixed-effects models might be appropriate. Song activity is not normally distributed for either species and either transforming the response variable or using a non-normal distribution might be more appropriate.
+
+Next steps will be to generate prediction plots from a model and test for violations of different assumptions of regression.

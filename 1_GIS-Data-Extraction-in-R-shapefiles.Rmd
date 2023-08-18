@@ -1,0 +1,428 @@
+---
+title: "Lesson 2. GIS Data Extraction to Point Counts in R: Shapefiles"
+author: "L Leston"
+date: "2023-07-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate examples of spatial data extraction from shapefiles and processing of that data in R. Basically, turn R into an open-source geographic information system (GIS). The subsequent GIS lesson will focus on raster data extraction in R. *Note*: older GIS R packages like **sp** are not used in this lesson because those packages are no longer being updated and may become incompatible with future versions of R packages that are continuing to be updated. The **sf** package used in this lesson is part of the **tidyverse** set of packages.
+
+**Learning Outcomes**
+
+The student will learn how to read shapefiles into R.
+
+The student will learn how to create shapefiles from data frames containing spatial coordinates.
+
+The student will learn how to create bounding boxes for shapefiles and buffers around shapefile features. 
+
+The student will use bounding boxes to crop a shapefile and buffers to clip shapefiles within a specific distance of features.
+
+The student will dissolve boundaries between shapefile features to create a single polygon.
+
+The student will merge shapefile features into a single file.
+
+The student will calculate area of polygons within a buffered, clipped distance of a point.
+
+The student will calculate an area-weighted harvest age within a specific distance of features (points).
+
+The student will calculate nearest distance from one shapefile feature (point) to nearest example of another feature.
+
+Read in study area(s).
+
+**Wild Trax data set: BU_Edge_Communities_2021-2022**
+
+The BU Edge Communities 2021-2022 data set consists of recordings from ARU stations set up along short transects starting at different kinds of manmade edges in Alberta’s boreal forests. These edges are associated with either harvest of trees for timber or pulpwood or different types oil and gas footprint (seismic lines, pipelines, roads, well sites).
+
+```{r study-area, echo=TRUE, message=FALSE, warning=FALSE}
+library(sf)
+library(dplyr)
+library(tidyr)
+
+buEdges<-read.csv("point counts/BU_Edge_Communities_2021-2022_main_report.csv", header=TRUE)
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+buEdges$Year<-substr(buEdges$recording_date_time,1,4)#extracts year
+buEdges.SSYR<-unique(buEdges[,c("location","Year","project_id","latitude","longitude")])
+#get rid of any points lacking coordinates
+buEdges.SSYR<-buEdges.SSYR%>%
+  filter(!is.na(latitude))%>%
+  filter(!is.na(longitude))
+#buEdges.SSYR<-buEdges.SSYR[!is.na(latitude),]   #in base R
+#buEdges.SSYR<-buEdges.SSYR[!is.na(longitude),]  #in base R
+
+ssyr.sf <- st_as_sf(x = buEdges.SSYR,                         
+               coords = c("longitude", "latitude"),
+               crs = "+init=epsg:4326 +proj=longlat +ellps=WGS84 
++datum=WGS84 +no_defs +towgs84=0,0,0")
+
+print("Bounding box of new shapefile in lat/long:")
+
+st_bbox(ssyr.sf)
+
+ssyr.sf<-st_transform(ssyr.sf, "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs")
+str(ssyr.sf)
+
+print("Bounding box of new shapefile in UTM coordinates:")
+
+st_bbox(ssyr.sf)
+
+```
+
+We will generate a couple kinds of *buffers* around these points. One kind of buffer generates a separate polygons around each point and is ID'ed to that point. This kind of buffer can be used to clip spatial data and summarize that data for each point separately.
+
+For the other type of buffer, we will take the individual buffers around each point and *dissolve* them so that although the buffers remain separate in physical space they lose their unique point-specific information. This kind of dissolved shapefile can have a few uses. First, if there are overlapping buffered features, then dissolving those features enables you to calculate total area of those features without overestimating area through double-counting. Second, this kind of dissolved buffer could be used to clip larger shapefiles to a smaller area of interest closer to our survey points.
+
+```{r get-buffers, echo=TRUE, message=FALSE, warning=FALSE}
+buEdges_500<-st_buffer(ssyr.sf,500)%>%mutate(ID='buEdges') #500 m
+#knitr::kable(buEdges_500)
+plot(buEdges_500)
+buEdges_500_dissolve<-buEdges_500%>%group_by(ID)%>%summarize()%>%mutate(NAME='buEdges') 
+#dissolve polygons in this buffer shapefile
+knitr::kable(buEdges_500_dissolve)
+plot(buEdges_500_dissolve)
+```
+
+Shapefiles can be filtered like regular data frames based on their attributes. Separate shapefiles can be merged together into a single shapefile, just like data frames as well.
+
+```{r filter-and-merge-shapefiles, echo=TRUE, message=FALSE, warning=FALSE}
+#filtering
+harvestPoints<-ssyr.sf%>%
+  filter(substr(location,1,1)=="H")
+#same as harvestPoints<-buEdges[substr(location,1,1)=="H",]
+roadPoints<-ssyr.sf%>%
+  filter(substr(location,1,1)=="R")%>%
+  mutate(featureType="Road")
+#same as roadPoints<-buEdges[substr(location,1,1)=="R",]
+pipelinePoints<-ssyr.sf%>%
+  filter(substr(location,1,1)=="P")%>%
+  mutate(featureType="Pipeline")
+#same as pipelinePoints<-buEdges[substr(location,1,1)=="P",]
+seismicPoints<-ssyr.sf%>%
+  filter(substr(location,1,1)=="S")%>%
+  mutate(featureType="Seismic")
+#same as seismicPoints<-buEdges[substr(location,1,1)=="S",]
+
+
+#merging shapefiles
+linearFeatures<-bind_rows(roadPoints, pipelinePoints, seismicPoints)
+#same as linearFeatures<-rbind(roadPoints, pipelinePoints, seismicPoints)
+
+plot(linearFeatures["featureType"])
+
+```
+
+There are `r nrow(ssyr.sf)` observations in the *buEdges* shapefile (point locations in a given year) but only `r nrow(linearFeatures)` observations in the merged shapefile we created by selecting just the seismic line, pipeline, and roadside transect points.
+
+We can also create shapefiles inside of R by generating them inside a *fishnet* or *vector grid* of cells, and optionally getting centroids for each cell. This could be a way of getting new future survey points inside a study area, that haven't been visited yet.
+
+```{r make-fishnet-or-vector-grid, echo=TRUE, message=FALSE, warning=FALSE}
+studyarea_bb <- matrix(c(188702, 6572134,#from bounding box of point counts
+                      820183, 6572134,
+                      820183, 5470906,
+                      188702, 5470906,
+                      188702, 6572134), byrow = TRUE, ncol = 2) %>%
+  list() %>% 
+  st_polygon() %>% 
+  st_sfc(., crs = "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs")
+
+#then make a grid whose cells (~100x100 km) can be used to intersect shapefile and make tiles
+studyarea_grid <- st_make_grid(studyarea_bb, n = c(50, 50), 
+                                 crs = "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs", 
+                                 what = 'polygons') %>%
+  st_sf('geometry' = ., data.frame('ID' = 1:length(.)))
+
+plot(studyarea_grid)
+
+#or just the centroids from those grid
+studyarea_grid_centroids <- st_make_grid(studyarea_bb, n = c(50, 50), 
+                                 crs = "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs", 
+                                 what = 'centers') %>%
+  st_sf('geometry' = ., data.frame('ID' = 1:length(.)))
+
+#studyarea_grid_centroids
+plot(studyarea_grid_centroids)
+
+#saving shapefile outside of R
+#st_write(studyarea_grid_centroids, "output/centroids2500.shp", overwrite=TRUE)
+```
+
+We will now try extracting some spatial data to survey locations.
+
+First define a function for extracting nearest distance to features of interest. We will then estimate the shortest distance from each potential sample point to features within a shapefile. We can estimate distances to the nearest point-feature, line-feature, or polygon-feature.
+
+```{r def-distance-function, echo=TRUE, message=FALSE, warning=FALSE}
+estimDist<-function(pointfile, polyfile, maxdist){
+  ss.sf.summary<-list()
+  for (i in 1:100){#first 100 point counts in this shapefile
+  #for (i in 1:nrow(pointfile)){#all of the point counts in this shapefile
+    ss.sf.i<-pointfile[i,]
+    SS.i<-ss.sf.i$location
+    b.maxdist<-st_buffer(ss.sf.i,maxdist)
+    p.maxdist<-st_intersection(polyfile, b.maxdist)#replaced polyfile.y with polyfile
+    nearest<-ifelse((nrow(p.maxdist)==0), maxdist+1, 
+                    min(st_distance(ss.sf.i,p.maxdist)))
+    ss.sf.summary[[i]]<-data.frame(location=SS.i,
+                                     NEAR.DIST=nearest)
+    #print(paste0("point ",i," done"))  #you can turn this on if you want to watch the progress in your analysis
+  }
+  summaries<-do.call(rbind, ss.sf.summary)
+  return(summaries)
+}
+```
+
+Get footprint shapefile sources you want to estimate distances to. You can estimate distances to points, polygons, or lines.
+
+```{r read-in-footprint, echo=TRUE, message=FALSE, warning=FALSE}
+harvest<-st_read("footprint/harvest2019corr.shp")
+#read in shapefile, then make sure all shapefiles are in a common projection with units in metres
+harvest<-st_transform(harvest, "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs")
+```
+
+Extract data to each potential sample point. Due to the length of time increasing with the number of points being processed, the following chunk has been turned off (*eval=FALSE*).
+
+```{r extract-distance-to-footprint, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+maxdist<-1000
+pointfile<-ssyr.sf
+pointfilebuffer<-st_buffer(pointfile, maxdist)
+featuretype<-harvest
+
+a<-Sys.time()
+polyfile<-st_intersection(featuretype, pointfilebuffer)
+summaries<-estimDist(pointfile,polyfile,maxdist)
+summaries<-data.frame(summaries)
+str(summaries)
+summaries$distHarvest<-summaries$NEAR.DIST
+summaries$NEAR.DIST<-NULL
+write.csv(summaries, file=paste0("output/buEdges_harvestDistances.csv"))
+b<-Sys.time()
+print(b-a)
+```
+
+We used harvest footprint in our example, but you might want to try out other footprint types as well. Look at the other footprint types available and see how you might change the above script. How would you change the script below? Once you make your changes, set *eval=* to *TRUE* or simply delete *eval=FALSE* from the code chunk header.
+
+```{r extract-distance-to-your-own-footprint, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+harvest<-st_read("footprint/harvest2019corr.shp")
+#read in shapefile, then make sure all shapefiles are in a common projection with units in metres
+harvest<-st_transform(harvest, "+proj=tmerc +lat_0=0 +lon_0=-115 +k=0.9992 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs")
+
+maxdist<-1000
+pointfile<-ssyr.sf
+pointfilebuffer<-st_buffer(pointfile, maxdist)
+
+featuretype<-harvest
+a<-Sys.time()
+polyfile<-st_intersection(featuretype, pointfilebuffer)
+summaries<-estimDist(pointfile,polyfile,maxdist)
+summaries<-data.frame(summaries)
+str(summaries)
+summaries$distSeismic<-summaries$NEAR.DIST
+summaries$NEAR.DIST<-NULL
+write.csv(summaries, file=paste0("output/buEdges_harvestDistances.csv"))
+b<-Sys.time()
+print(b-a)
+```
+
+Now let's try extracting the *amount* of certain human footprint types within a specified distance of each potential sample point. The idea is that the shorter the distance to that footprint or the greater the amount of that footprint within *X* meters of each point, the stronger the effect of that footprint on wildlife abundance at that point. We create another function that can be reused with different features. This function will estimate the area and proportion of land within *X* meters of each sample point occupied by a particular feature type.
+
+```{r def-area-function, echo=TRUE, message=FALSE, warning=FALSE}
+estimArea<-function(pointfile, polyfile, bufferdist){
+  ss.sf.summary<-list()
+  for (i in 1:100){#first 100 points in shapefile
+  #for (i in 1:nrow(pointfile)){#all points in shapefile
+    ss.sf.i<-pointfile[i,]
+    SS.i<-ss.sf.i$location
+    bufferPoint<-st_buffer(ss.sf.i, bufferdist)
+    bufferIntersect<-st_intersection(polyfile, bufferPoint)
+    featureArea <- ifelse((nrow(bufferIntersect)==0), 0, (bufferIntersect %>% st_union() %>% st_area()))# select just the polygons in the intersection
+    ss.sf.summary[[i]]<-data.frame(location=SS.i,
+                                   FeatureArea=featureArea,
+                                   FeatureProportion=featureArea/(3.14*bufferdist^2))
+    #print(paste0("point ",i," done"))   #turn this one if you want to keep track of analysis progress
+  }
+  summaries<-do.call(rbind, ss.sf.summary)
+  return(summaries)
+}
+```
+
+Extract data to each potential sample point. Again, due to the length of time increasing with the number of points being processed, the following chunk has been turned off (*eval=FALSE*).
+
+```{r extract-feature-areas, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+maxdist<-600#use maxdist to reduce the size of the features shapefile we're getting areas from
+bufferdist<-500#use bufferdist to define the area around each sampling point where we're estimating area of a feature of interest
+pointfile<-ssyr.sf
+pointfilebuffer<-st_buffer(pointfile, maxdist)
+
+featuretype<-harvest
+polyfile<-st_intersection(featuretype, pointfilebuffer)
+summaries<-estimArea(pointfile,polyfile,bufferdist)
+summaries<-data.frame(summaries)
+str(summaries)
+summaries$HarvestArea500<-summaries$FeatureArea
+summaries$FeatureArea<-NULL
+summaries$HarvestProp500<-summaries$FeatureProportion
+summaries$FeatureProportion<-NULL
+write.csv(summaries, file=paste0("output/buEdges_harvestAreas500m.csv"))
+b<-Sys.time()
+print(b-a)
+```
+
+Look at the other footprint types available and see how you might change the above script. How would you change the script below? Once you make your changes, set *eval=* to *TRUE* or simply delete *eval=FALSE* from the code chunk header.
+
+```{r extract-your-own-feature-areas, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+maxdist<-600#use maxdist to reduce the size of the features shapefile we're getting areas from
+bufferdist<-500#use bufferdist to define the area around each sampling point where we're estimating area of a feature of interest
+pointfile<-ssyr.sf
+pointfilebuffer<-st_buffer(pointfile, maxdist)
+
+featuretype<-harvest
+polyfile<-st_intersection(featuretype, pointfilebuffer)
+summaries<-estimArea(pointfile,polyfile,bufferdist)
+summaries<-data.frame(summaries)
+str(summaries)
+summaries$HarvestArea500<-summaries$FeatureArea
+summaries$FeatureArea<-NULL
+summaries$HarvestProp500<-summaries$FeatureProportion
+summaries$FeatureProportion<-NULL
+write.csv(summaries, file=paste0("output/buEdges_harvestAreas500m.csv"))
+b<-Sys.time()
+print(b-a)
+```
+
+So now we have some examples of data extracted to our potential sample points. After extracting data, we need to sample ~350 points that can be used in a balanced study design. First, we will combine the separate kinds of data we extracted to the same points into a single data frame. We will then manipulate the data, filtering points to those within 50 m of a seismic line and 5 km of Highway 881, and assigning points to treatment categories based on the amount of industrial footprint within 500 m of each point. We may or may not then draw samples with equal numbers of points in each treatment category. 
+
+```{r combine-footprint-data, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+allfootprint<-cbind()
+head(allfootprint)
+str(allfootprint)#make sure data frames are combined
+```
+
+
+We will extract amount of, age of, and distance to footrpint for these point count stations. All the points are more recent than 2019 (the age of the footprint data), but since many point counts in WildTrax were visited in years prior to the age of the footprint layer, some footprint polygons could be more recent than some point counts, so we'll remove those footprint polygons before calculating footprint amount, age, and distance.
+
+First, we'll create a new function for extracting footprint amount, age, and distance to nearest footprint, using the harvest shapefile again as an example. 
+
+```{r def-area-age-dist-function, echo=TRUE, message=FALSE, warning=FALSE}
+#Modified areadist function for harvest blocks, where age of harvests within X m is calculated
+#Might also be applied to other footprint if age of those footprints is of interest
+#Note weighted.mean function not used because it didn't work with sf package
+areadist.age<-function(pointfile, polyfile, maxdist, oldestyear, bufferdist){
+  ss.sf.summary<-list()
+  #for (i in 1:100){#all points in shapefile
+  for (i in 1:nrow(pointfile)){#all points in shapefile
+    ss.sf.i<-pointfile[i,]
+    SS.i<-ss.sf.i$location
+    YEAR.i<-ss.sf.i$Year
+    #1. use the year of the survey then filter to only the footprint polygons that are older than that point count survey.
+    polyfile.y<-polyfile%>%
+      filter(YEAR<Year)#should this filtering occur on the polygons after isolating those within 150 and 565 m of each point count?
+    #1b. also after time-filtering, create buffer of specified size
+    pointBuffer<-st_buffer(ss.sf.i,bufferdist)
+    polyClipped<-st_intersection(polyfile.y, pointBuffer)
+    polyClipped$Recalc_Area<-st_area(polyClipped)#recalculate areas of clipped polygons
+    polyClipped$YEAR<-ifelse(polyClipped$YEAR==0, oldestyear, polyClipped$YEAR)
+    polyClipped$Age<-YEAR.i-polyClipped$YEAR #ifelse((nrow(p.150))==0,NA,(YEAR.i-p.150$YEAR))   #will be null if nrow(p.150)==0
+    polyClipped$AgeXArea<-polyClipped$Age*polyClipped$Recalc_Area#ifelse((nrow(p.150))==0,NA,(p.150$Age*p.150$Recalc_Area))#will be null if nrow(p.150)==0
+    #calculate area amount after dissolving polygons
+    areaClipped <- ifelse((nrow(polyClipped)==0), 0, (polyClipped %>% st_union() %>% st_area()))# select just the polygons in the intersection
+    
+    sum.recalc.area<-ifelse((nrow(polyClipped)==0), 0, sum(polyClipped$Recalc_Area))
+    
+    SumAgeXArea<-sum(polyClipped$AgeXArea)#will be null if nrow(p.150)==0
+    MeanWtAge<-ifelse((nrow(polyClipped)==0), NA, SumAgeXArea/sum.recalc.area)#area.150
+
+    #2. select a maximum buffer distance around the point (X), beyond which footprint features are exceedingly unlikely to influence bird abundance within the point, then filter to only the footprint polygons that fall within that buffer distance.
+    b.maxdist<-st_buffer(ss.sf.i,maxdist)
+    p.maxdist<-st_intersection(polyfile.y, b.maxdist)
+    #3. estimate minimum distance among the time-and-buffer-filtered polygons
+    #4. if nrow(time-and-buffer-filtered polygons) == 0, i.e. there is no footprint of a particular type within X m of a point count in the year of the survey, nearest distance to that footprint is capped at X.
+    nearest<-ifelse((nrow(p.maxdist)==0), maxdist+1, 
+                    min(st_distance(ss.sf.i,p.maxdist)))
+    ss.sf.summary[[i]]<-data.frame(location=SS.i,
+                                     YEAR=YEAR.i,
+                                     FeatureArea=areaClipped,
+                                     FeatureProportion=areaClipped/(3.14*bufferdist^2),
+                                     MeanFeatureAge=MeanWtAge,
+                                     NEAR.DIST=nearest)
+    print(paste0("point ",i," done"))  #turn this on if you want to track progress of this analysis
+  }
+  summaries<-do.call(rbind,ss.sf.summary)
+  return(summaries)
+}
+
+maxdist<-1000 #pick a distance for buffering the point counts prior to clipping the footprint data. This distance will be a threshold beyond which (if no footprint polygons exist within this distance of a point count, the nearest distance to that footprint is set to this distance)
+bufferdist<-500
+#The larger that maxdist and bufferdist are, the more harvest polygons that will be used in calculations and the longer the processing time.
+
+```
+
+Now we'll extract harvest amount within 500 m, mean age within 500 m, and nearest distance to harvest for our point counts. Again, due to the potentially long processing time, this code chunk will be turned off by default in the knitted Markdown document.
+
+```{r extract-harvest-age-area-distance, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+maxdist<-1000 #pick a distance for buffering the point counts prior to clipping the footprint data. This distance will be a threshold beyond which (if no footprint polygons exist within this distance of a point count, the nearest distance to that footprint is set to this distance)
+bufferdist<-500
+#The larger that maxdist and bufferdist are, the more harvest polygons that will be used in calculations and the longer the processing time.
+
+ssyr.sf$Year<-as.integer(ssyr.sf$Year)
+pointfile<-ssyr.sf
+pointfilebuffer<-st_buffer(pointfile, maxdist)
+
+featuretype<-harvest
+oldestyear<-min(featuretype$YEAR[featuretype$YEAR>0])
+
+a<-Sys.time()
+polyfile<-st_intersection(featuretype, pointfilebuffer)
+summaries<-areadist.age(pointfile,polyfile,maxdist,oldestyear,bufferdist)
+summaries<-data.frame(summaries)
+b<-Sys.time()
+print(b-a)
+str(summaries)
+summaries$distHarvest<-summaries$NEAR.DIST
+summaries$NEAR.DIST<-NULL
+summaries$AreaHarvest500<-summaries$FeatureArea
+summaries$FeatureArea<-NULL
+summaries$PropHarvest500<-summaries$FeatureProportion
+summaries$FeatureProportion<-NULL
+write.csv(summaries, file=paste0("output/buEdges_HarvestAreaAgeDistance.csv"))
+
+```
+
+The resulting data contains estimates of mean harvest age, nearest distance to a harvest polygon, capped at `r maxdist` meters, and the area of harvest polygons and proportion of land within `r bufferdist` meters of each point that is inside a harvest area.
+
+How would you adjust the script below to get a different type of footprint extracted?
+
+```{r extract-your-footprint-age-area-distance, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+maxdist<-1000 #pick a distance for buffering the point counts prior to clipping the footprint data. This distance will be a threshold beyond which (if no footprint polygons exist within this distance of a point count, the nearest distance to that footprint is set to this distance)
+bufferdist<-500
+#The larger that maxdist and bufferdist are, the more harvest polygons that will be used in calculations and the longer the processing time.
+
+ssyr.sf$Year<-as.integer(ssyr.sf$Year)
+pointfile<-ssyr.sf
+pointfilebuffer<-st_buffer(pointfile, maxdist)
+
+featuretype<-harvest
+oldestyear<-min(featuretype$YEAR[featuretype$YEAR>0])
+
+a<-Sys.time()
+polyfile<-st_intersection(featuretype, pointfilebuffer)
+summaries<-areadist.age(pointfile,polyfile,maxdist,oldestyear,bufferdist)
+summaries<-data.frame(summaries)
+b<-Sys.time()
+print(b-a)
+str(summaries)
+summaries$distHarvest<-summaries$NEAR.DIST
+summaries$NEAR.DIST<-NULL
+summaries$AreaHarvest500<-summaries$FeatureArea
+summaries$FeatureArea<-NULL
+summaries$PropHarvest500<-summaries$FeatureProportion
+summaries$FeatureProportion<-NULL
+write.csv(summaries, file=paste0("output/buEdges_HarvestAreaAgeDistance.csv"))
+
+```
+
+
+Congratulations! You've successfully extracted spatial data to point counts in your study!

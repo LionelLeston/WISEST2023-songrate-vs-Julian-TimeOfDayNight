@@ -1,0 +1,541 @@
+---
+title: "Lesson 8. Data Exploration and Plotting in R - White-throated Sparrow Data"
+author: "A Smillie & L Leston"
+date: "2023-07-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**Learning Objectives**
+
+The purpose of this lesson is to demonstrate examples of exploring and plotting potential relationships in data in R, using the student's own data. We will show examples of using base R and the *tidyverse* packages like *tidyr*, *dplyr*, and *ggplot* to plot data, and start introducing very simple models.
+
+**Learning Outcomes**
+
+The student will be able to manipulate data frames to get data ready for plotting.
+
+The student will explore how data within a single variable is distributed (*histogram*).
+
+The student will be able to generate box plots to compare values of a variable within two or more categorical groups (*box, bar plots*).
+
+The student will be able to generate plots showing how one numeric variable's values change with the values of another numeric variable (*scatter plot*).
+
+The student will be able to run a simple *model* describing a theoretical relationship between two or more variables. Model examples include a *t-test*, a *regression*, an *analysis of variance (ANOVA)*, and a *generalized linear model*.
+
+The student will merge predictor data (*independent or explanatory* variables for each site) to bird count data to test for a relationship between bird abundance (the *dependent variable*) and an *independent variable*.
+
+**Wild Trax data set: Modified_Lattitude_(TEWA)_and_(WTSP)_main_report**
+
+The data we are looking at consist of detections of Tennessee Warbler (TEWA) and White-throated Sparrow (WTSP) per recording at each ARU station. There is one recording per hour within a 24-hour period at each station on a particular date, with one or more individuals per species detected per recording. The intent is to look at how detections of SWTH change over a 24-hour cycle and ideally how the relationship between time of day and song activity varies with latitude. *Note*: not all of the recordings have been transcribed yet, so there are some recordings with "NONE" as the species detected.
+
+
+**Reading Data into R**
+
+Now we will read in the data using a *function* in R called **read.csv()**:
+
+```{r read-in-csv, echo=TRUE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+ToD_TEWA_WTSP<-read.csv("point counts/Modified_Lattitude_(TEWA)_and_(WTSP)_main_report.csv", header=TRUE)#modified12daysiteanalysisTEWA,WTSP
+#R looks for data file in point counts folder in same directory as this R script. File address is a relative file path.
+```
+
+R has taken a spreadsheet or table stored in a CSV file and saved it as an object in R called a *data frame*. The data frame stores the data we imported in a similar manner to a spreadsheet or table: observations as rows, variables or data types as columns. We will now examine the contents of the data frame *ToD_T_W* that we have created.
+
+```{r look-at-data-frame, echo=TRUE, message=FALSE, warning=FALSE}
+str(ToD_TEWA_WTSP)
+```
+
+Let's get rid of the recordings which have not yet been transcribed. 
+
+```{r look-at-data-frame2, echo=TRUE, message=FALSE, warning=FALSE}
+nrow(ToD_TEWA_WTSP[ToD_TEWA_WTSP$species_code=="NONE",])
+nrow(ToD_TEWA_WTSP[!ToD_TEWA_WTSP$species_code=="NONE",])
+
+nrow(ToD_TEWA_WTSP[ToD_TEWA_WTSP$observer_user_id==-1,])
+nrow(ToD_TEWA_WTSP[!ToD_TEWA_WTSP$observer_user_id==-1,])
+
+levels(as.factor(ToD_TEWA_WTSP$aru_task_status))
+#"Bad Weather" "In Progress" "New"         "Transcribed"
+nrow(ToD_TEWA_WTSP[ToD_TEWA_WTSP$aru_task_status=="Transcribed",])
+nrow(ToD_TEWA_WTSP[!ToD_TEWA_WTSP$aru_task_status=="Transcribed",])
+
+
+ToD_TEWA_WTSPTrans<-ToD_TEWA_WTSP%>%filter(aru_task_status=="Transcribed")
+```
+
+Our observations will be individual recordings. Each observation will have a count for each possible species in the dataset. We start by taking the variable *individual_count*, which is a character string, and converting it to a number variable. *Note*: the variable *individual_order* may be better as *max(individual_order)* will give us the number of distinct individuals thought to be in a recording.
+
+```{r species-per-recording, echo=TRUE, message=FALSE, warning=FALSE}
+# ToD_TEWA_WTSP.birdsonly<-ToD_TEWA_WTSPTrans
+# ToD_TEWA_WTSP.birdsonly$individual_count<-ifelse(ToD_TEWA_WTSP.birdsonly$individual_count %in% c("CI 1","CI 2","CI 3","TMTT"), "0", ToD_T_W
+#                                                  
+#                                                  .birdsonly$individual_count)
+# 
+# ToD_T_W.birdsonly$individual_count<-ifelse(ToD_T_W.birdsonly$species_common_name == "NONE", "0", ToD_T_W.birdsonly$individual_count)
+# 
+# levels(as.factor(ToD_T_W.birdsonly$individual_count))
+# ToD_T_W.birdsonly$individual_count<-as.integer(ToD_T_W.birdsonly$individual_count)
+
+#Alternatively, you could do this
+ToD_TEWA_WTSP.birdsonly<-ToD_TEWA_WTSPTrans%>%
+  mutate(individual_count = case_when(individual_count=="1" ~ 1,
+                                individual_count=="2" ~ 2,
+                                individual_count=="3" ~ 3,
+                                individual_count=="4" ~ 4,
+                                individual_count=="8" ~ 8,
+                                species_code=="NONE" ~ 0,
+                                individual_count=="0" ~ 0,
+                                individual_count=="CI 1" ~ 0,
+                                individual_count=="CI 2"~ 0,
+                                individual_count=="CI 3"~ 0,
+                                individual_count=="TMTT"~ 0))
+
+```
+
+Now that we have counts of individual species, we can try summarizing the data using the variable *individual_order*.  
+
+**Manipulating data using *tidyverse* functions**
+
+Summarize individual counts of each species at each site in each recording using *dplyr* and *tidyr* while keeping everything on a single 2-d data frame.
+
+```{r dplyr-tidyr, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording_WTSP<-ToD_TEWA_WTSP.birdsonly%>%
+  #filter(location=="R-P15-19-103")%>%
+  group_by(location, recording_date_time, species_code, latitude, longitude)%>%
+  summarize(songactivity=sum(individual_count))%>%
+  pivot_wider(names_from="species_code", values_from="songactivity")%>%
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  select("location", "recording_date_time", "latitude", "longitude", "WTSP")
+write.csv(songs_per_recording_WTSP, file="output/WTSP_songs_per_recording.csv")
+
+indivs_per_recording_WTSP<-ToD_TEWA_WTSP.birdsonly%>%
+  group_by(location, recording_date_time, species_code, latitude, longitude)%>%
+  #filter(location=="R-P15-19-103")%>%
+  summarize(indivs=max(individual_order))%>%
+  pivot_wider(names_from="species_code", values_from="indivs")%>%
+  mutate(across(where(is.numeric), ~replace(., is.na(.), 0)))%>%
+  select("location", "recording_date_time", "latitude", "longitude", "WTSP")
+write.csv(indivs_per_recording_WTSP, file="output/WTSPindivs_per_recording.csv")
+```
+
+Create Time Variables
+
+```{r dplyr-tidyr2, echo=TRUE, message=FALSE, warning=FALSE}
+library(lubridate)
+
+songs_per_recording_WTSP$Hour<-format(as.POSIXct(songs_per_recording_WTSP$recording_date_time), format = "%H")
+songs_per_recording_WTSP$Minute<-format(as.POSIXct(songs_per_recording_WTSP$recording_date_time), format = "%M")
+songs_per_recording_WTSP$timeNumeric<-as.integer(songs_per_recording_WTSP$Hour)+(as.integer(songs_per_recording_WTSP$Minute)/60)
+
+songs_per_recording_WTSP$JulianDay<-yday(songs_per_recording_WTSP$recording_date_time)
+write.csv(songs_per_recording_WTSP, file="output/WTSPsongs_per_recording.csv")
+
+indivs_per_recording_WTSP$Hour<-format(as.POSIXct(indivs_per_recording_WTSP$recording_date_time), format = "%H")
+indivs_per_recording_WTSP$Minute<-format(as.POSIXct(indivs_per_recording_WTSP$recording_date_time), format = "%M")
+indivs_per_recording_WTSP$timeNumeric<-as.integer(indivs_per_recording_WTSP$Hour)+(as.integer(indivs_per_recording_WTSP$Minute)/60)
+
+indivs_per_recording_WTSP$JulianDay<-yday(indivs_per_recording_WTSP$recording_date_time)
+write.csv(indivs_per_recording_WTSP, file="output/WTSPindivs_per_recording.csv")
+```
+
+
+**Histograms**
+
+```{r histogram, echo=TRUE, message=FALSE, warning=FALSE}
+hist(songs_per_recording_WTSP$WTSP)
+print(paste0("Mean WTSP song activity per recording: ", mean(songs_per_recording_WTSP$WTSP)))
+print(paste0("Variance in WTSP song activity per recording: ", var(songs_per_recording_WTSP$WTSP)))
+
+hist(indivs_per_recording_WTSP$WTSP)
+print(paste0("Mean WTSP individuals per recording: ", mean(indivs_per_recording_WTSP$WTSP)))
+print(paste0("Variance in WTSP individuals per recording: ", var(indivs_per_recording_WTSP$WTSP)))
+```
+
+Histogram suggests non-normal distributions of Tennessee Warbler song activity and number of individuals. Variance in these response variables is much larger than mean values, suggesting that we should model them with a negative binomial distribution.
+
+```{r histogram2, echo=TRUE, message=FALSE, warning=FALSE}
+nlevels(as.factor(songs_per_recording_WTSP$latitude))#4
+levels(as.factor(songs_per_recording_WTSP$latitude))
+#"53.789867" "59.411708" "59.417149" "60.03968"
+hist(songs_per_recording_WTSP$latitude)
+hist(songs_per_recording_WTSP$JulianDay)
+hist(songs_per_recording_WTSP$timeNumeric)
+```
+
+**Box and Bar Plots**
+
+```{r boxplot, echo=TRUE, message=FALSE, warning=FALSE}
+boxplot(songs_per_recording_WTSP$WTSP)
+boxplot(WTSP~location,
+        data=songs_per_recording_WTSP)
+```
+
+
+```{r barplot, echo=TRUE, message=FALSE, warning=FALSE}
+WTSP_summ<-songs_per_recording_WTSP%>%
+  group_by(Hour)%>%
+  summarize(WTSP=mean(WTSP))
+barplot(WTSP_summ$WTSP,
+  xlab="Time of Day (24 h period)",
+  names.arg=levels(as.factor(songs_per_recording_WTSP$Hour)),
+  ylab="Mean WTSP Song Activity",
+  border="red",
+  col="blue")
+```
+
+**Scatter Plots**
+
+```{r scatterplot-tod, echo=TRUE, message=FALSE, warning=FALSE}
+plot(songs_per_recording_WTSP$Hour,
+     songs_per_recording_WTSP$WTSP,
+     ylab="WTSP song rate",
+     xlab="Time of day (24 h period)", 
+     col="blue")
+```
+```{r scatterplot-julian, echo=TRUE, message=FALSE, warning=FALSE}
+plot(songs_per_recording_WTSP$JulianDay,
+     songs_per_recording_WTSP$WTSP,
+     ylab="WTSP song rate",
+     xlab="Time of season (#days since Jan 1)", 
+     col="blue")
+```
+
+```{r scatterplot-latitude, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording_WTSP$latitude.F<-as.factor(ifelse(songs_per_recording_WTSP$latitude<55,"S","N"))
+boxplot(WTSP~latitude.F,
+        data=songs_per_recording_WTSP)
+```
+
+
+
+**Run a Simple Model**
+
+Data exploration suggested that Tennessee Warbler song activity varied slightly as a quadratic function of Julian day.
+
+```{r simple-model, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording_WTSP$JDAY<-(songs_per_recording_WTSP$JulianDay-mean(songs_per_recording_WTSP$JulianDay))/sd(songs_per_recording_WTSP$JulianDay)
+songs_per_recording_WTSP$JDAY2<-songs_per_recording_WTSP$JDAY^2
+
+mod<-lm(WTSP~JDAY+JDAY2, data=songs_per_recording_WTSP)
+summary(mod)
+
+#Get predicted values from linear regression
+preds<-predict(mod, songs_per_recording_WTSP, se.fit = FALSE, scale = NULL, df = Inf,
+        interval = c("prediction"),
+        level = 0.95, type = c("response"))
+
+songs_per_recording_WTSP.P<-cbind(songs_per_recording_WTSP,preds)
+
+songs_per_recording_WTSP.P<-songs_per_recording_WTSP.P%>%
+  arrange(JulianDay)
+plot(songs_per_recording_WTSP.P$JulianDay,
+     songs_per_recording_WTSP.P$WTSP,
+     xlab="Julian day",
+     ylab="WTSP song activity")
+lines(songs_per_recording_WTSP.P$JulianDay,
+     songs_per_recording_WTSP.P$fit, col="darkred")
+
+```
+
+Regression results also suggested that Tennesse song activity varied as a quadratic function of Julian day, although a *bimodel distribution* is another possibility, and Julian day only explained a small amount of variance.
+
+How well does the data meet the statistical assumptions of regression?
+
+```{r simple-model-residual-plot, echo=TRUE, message=FALSE, warning=FALSE}
+res<-resid(mod)
+plot(fitted(mod), res)
+abline(0,0)
+```
+
+There is a lot of variance heterogeneity (bad!) since the *residuals* vary a lot more as the size of predicted values of song activity increase.
+
+```{r simple-model-QQ-plot, echo=TRUE, message=FALSE, warning=FALSE}
+qqnorm(res)#create a Q-Q plot for the residuals
+qqline(res)#add a straight diagonal line to the plot
+```
+
+Larger predicted values' residuals deviate from the Q-Q line, Though not that bad
+
+
+We can try transforming the response variable to see if it improves the regression results but data independence will still be an issue.
+
+```{r simple-model2, echo=TRUE, message=FALSE, warning=FALSE}
+songs_per_recording_WTSP$WTSP.sq<-sqrt(songs_per_recording_WTSP$WTSP)
+songs_per_recording_WTSP$WTSP.log<-log(songs_per_recording_WTSP$WTSP+0.1)
+
+mod2<-lm(WTSP.sq~JDAY+JDAY2, data=songs_per_recording_WTSP)
+summary(mod2)
+
+res2<-resid(mod2)
+plot(fitted(mod2), res2)
+abline(0,0)
+qqnorm(res2)
+qqline(res2)
+
+mod3<-lm(WTSP.log~JDAY+JDAY2, data=songs_per_recording_WTSP)
+summary(mod3)
+
+res3<-resid(mod3)
+plot(fitted(mod3), res3)
+abline(0,0)
+qqnorm(res3)
+qqline(res3)
+```
+
+Square-root transforming or log-transforming the data does not improve the model output much. R-squared values are slightly higher after transformation but variance is still very heterogeneous.
+
+A *generalized linear model* that assumes a non-normal error distribution in song activity might fit better.
+
+```{r simple-model3, echo=TRUE, message=FALSE, warning=FALSE}
+mod4<-glm(WTSP~JDAY+JDAY2, data=songs_per_recording_WTSP, family=quasipoisson(link = "log"))
+summary(mod4)
+
+res4<-resid(mod4)
+plot(fitted(mod4), res4)
+abline(0,0)
+
+pseudo.R2<-(mod4$null.deviance-mod4$deviance)/mod4$null.deviance
+```
+
+There is some variance heterogeneity still but less than with linear regression and the pseudo-R2 (proportion of explained deviance) `r pseudo.R2` is greater than the R2 explained by the regression.
+
+Data exploration suggests that Tennesse song activity varies as a more complex function of day and night. Use a more complex model like a generalized additive model or a circular function.
+
+*Also keep in mind*: all observations in these regression models are assumed to be independent but they come from four sites with multiple days in a row at a site. So mixed-effects models might be appropriate. 
+
+```{r simple-model5, echo=TRUE, message=FALSE, warning=FALSE}
+mod5<-glm(WTSP~JDAY+JDAY2+location, data=songs_per_recording_WTSP, family=quasipoisson(link = "log"))
+summary(mod5)
+pseudo.R2<-(mod5$null.deviance-mod5$deviance)/mod5$null.deviance
+```
+
+
+```{r simple-gam, echo=TRUE, message=FALSE, warning=FALSE}
+library(mgcv)
+#library(gamm4)
+thetaval=(var(songs_per_recording_WTSP$WTSP)/mean(songs_per_recording_WTSP$WTSP))
+
+songs_per_recording_WTSP$TIME<-(songs_per_recording_WTSP$timeNumeric-mean(songs_per_recording_WTSP$timeNumeric))/sd(songs_per_recording_WTSP$timeNumeric)
+
+GAM1 <- gam(WTSP ~s(JDAY, k = 3, bs = "cs") + s(TIME, k = 4, bs = "cs"),  data=songs_per_recording_WTSP, family=negbin(theta=thetaval, link="log"))
+
+coef.gammB<-coef(GAM1)
+#model.matrix(GAM1)
+```
+
+
+We can also check output from GAMs for potential data violations.
+
+
+```{r gam-checks, echo=TRUE, message=FALSE, warning=FALSE}
+print("GAM1 Check:")
+gam.check(GAM1)
+
+
+```
+
+Create a prediction dataset for GAMs
+
+```{r pred-dataset, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$timeNumeric==4,]
+WTSP.tsss.jd<-expand.grid(intercept=1,
+                             #latitude.F=c("N","S"), 
+                             TIME=-0.5254806, #scaled value associated with timeNumeric=4.00
+                             JDAY=as.numeric(levels(as.factor(JDAY)))
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+WTSP.tsss.jdmm <- model.matrix(GAM1, WTSP.tsss.jd)
+
+## predict and apply inverse link function: this gives a new matrix
+WTSP.gam.pred <- (exp(WTSP.tsss.jdmm %*% coef.gammB))#take antilog?
+Preds<-data.frame(WTSP.gam.pred)
+```
+
+Plot predicted relationship between Swainson's Thrush activity at 5 AM over the season.
+
+```{r plot-gamm-preds, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(WTSP.tsss.jd, Preds)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+# plotDataN.time5<-plotData%>%
+#   filter(latitude.F=="N")
+plotData$timeNumeric<-4.0
+plotData$JulianDay<-JulianDay
+
+plot(plotData$JulianDay, 
+     plotData$WTSP.gam.pred,
+     xlab="Time of Season (Days Since Jan. 1)",
+     ylab="Predicted 4 am WTSP Song Rate",
+     main="Alberta")
+
+
+# plotDataS.time5<-plotData%>%
+#   filter(latitude.F=="S")
+# plotDataS.time5$timeNumeric<-5.0
+# plotDataS.time5$JulianDay<-JulianDay
+# 
+# plot(plotDataS.time5$JulianDay, 
+#      plotDataS.time5$swth.gam.pred,
+#      xlab="Time of Season (Days Since Jan. 1)",
+#      ylab="Predicted 5am SWTH Song Rate",
+#      main="Southern Alberta")
+
+```
+
+```{r pred-dataset2, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$JulianDay==180,]
+WTSP.tsss.jd2<-expand.grid(intercept=1,
+                             #latitude.F=c("N","S"), 
+                             TIME=as.numeric(levels(as.factor(TIME))), 
+                             JDAY=-1.18#scaled value associated with JulianDay=150
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+WTSP.tsss.jdmm2 <- model.matrix(GAM1, WTSP.tsss.jd2)
+
+## predict and apply inverse link function: this gives a new matrix
+WTSP.gam.pred2 <- (exp(WTSP.tsss.jdmm2 %*% coef.gammB))#take antilog?
+Preds2<-data.frame(WTSP.gam.pred2)
+```
+
+Plot predicted relationship between Swainson's Thrush activity over a 24-hour period (Julian Day = 180) in both northern and southern Alberta.
+
+```{r plot-gamm-preds2, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(WTSP.tsss.jd2, Preds2)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+# plotDataN.time5<-plotData%>%
+#   filter(latitude.F=="N")
+plotData$timeNumeric<-timeNumeric
+plotData$JulianDay<-150
+
+plot(plotData$timeNumeric, 
+     plotData$WTSP.gam.pred2,
+     xlab="24-hour period",
+     ylab="Predicted WTSP Song Rate (JDAY 150)")
+
+
+# plotDataS.time5<-plotData%>%
+#   filter(latitude.F=="S")
+# plotDataS.time5$timeNumeric<-timeNumeric
+# plotDataS.time5$JulianDay<-150
+# 
+# plot(plotDataS.time5$timeNumeric, 
+#      plotDataS.time5$swth.gam.pred,
+#      xlab="24-hour period",
+#      ylab="Predicted WTSP Song Rate (JDAY 180)")
+
+```
+
+Predicted effects of time of day look discontinuous at extreme values (0 hrs and 23 hrs). A circular function might be better.
+
+```{r simple-gam3, echo=TRUE, message=FALSE, warning=FALSE}
+GAM3 <- gam(WTSP ~s(JDAY, bs = "cs", k=3) + s(TIME, bs = "cc"), data=songs_per_recording_WTSP, family=negbin(theta=thetaval, link="log"))
+#cc=a cyclic cubic spline used for TIME
+#removed the specification for the number of knots; a larger number of knots is used for both the JDAY and TIME basis functions
+
+coef.gammB3<-coef(GAM3)
+#model.matrix(GAM2$gam)
+coef.gammB3
+```
+
+```{r gam3-check, echo=TRUE, message=FALSE, warning=FALSE}
+print("AIC:")
+AIC(GAM1, GAM3)
+
+print("GAM3 Check:")
+gam.check(GAM3)
+
+```
+```{r pred-dataset3, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording_WTSP[songs_per_recording$timeNumeric==5,]
+WTSP.tsss.jd<-expand.grid(intercept=1,
+                             TIME=-0.5254806, #scaled value associated with timeNumeric=5.00
+                             JDAY=as.numeric(levels(as.factor(JDAY)))
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+WTSP.tsss.jdmm <- model.matrix(GAM3, WTSP.tsss.jd)
+
+## predict and apply inverse link function: this gives a new matrix
+WTSP.gam.pred <- (exp(WTSP.tsss.jdmm %*% coef.gammB3))#take antilog?
+Preds<-data.frame(WTSP.gam.pred)
+```
+
+Plot predicted relationship between Swainson's Thrush activity at 5 AM over the season in both northern and southern Alberta, using a circular function for the effect of time of day/night.
+
+```{r plot-gamm-preds3, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(WTSP.tsss.jd, Preds)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+plotData$timeNumeric<-4.0
+plotData$JulianDay<-JulianDay
+
+plot(plotData$JulianDay, 
+     plotData$WTSP.gam.pred,
+     xlab="Time of Season (Days Since Jan. 1)",
+     ylab="Predicted 4 am WTSP Song Rate")
+
+```
+
+Now plot the effect of time of day/night, using a circular function of time.
+
+```{r pred-dataset4, echo=TRUE, message=FALSE, warning=FALSE}
+timeNumeric=seq(from=0,to=23.95,by=0.05)
+JulianDay=seq(from=113,to=240,by=1)
+TIME=(timeNumeric-mean(timeNumeric))/sd(timeNumeric)
+JDAY=(JulianDay-mean(JulianDay))/sd(JulianDay)
+
+#songs_per_recording[songs_per_recording$JulianDay==180,]
+WTSP.tsss.jd2<-expand.grid(intercept=1,
+                             TIME=as.numeric(levels(as.factor(TIME))), 
+                             JDAY=-1.18#scaled value associated with JulianDay=150
+)
+
+#get model matrix for GAM2 based on these variables in prediction dataset
+WTSP.tsss.jdmm2 <- model.matrix(GAM3, WTSP.tsss.jd2)
+
+## predict and apply inverse link function: this gives a new matrix
+WTSP.gam.pred2 <- (exp(WTSP.tsss.jdmm2 %*% coef.gammB3))#take antilog?
+Preds2<-data.frame(WTSP.gam.pred2)
+```
+
+Plot predicted relationship between Swainson's Thrush activity over a 24-hour period (Julian Day = 180) in both northern and southern Alberta, using a circular function for the effect of time.
+
+```{r plot-gamm-preds4, echo=TRUE, message=FALSE, warning=FALSE}
+plotData<-cbind(WTSP.tsss.jd2, Preds2)
+plotData<-data.frame(plotData)
+#write.csv(plotData, file="output/GAMdatacheck.csv")
+plotData$timeNumeric<-timeNumeric
+plotData$JulianDay<-150
+
+plot(plotData$timeNumeric, 
+     plotData$WTSP.gam.pred,
+     xlab="24-hour period",
+     ylab="Predicted WTSP Song Rate (JDAY 150)")
+
+
+```
+
+Predicted effects
